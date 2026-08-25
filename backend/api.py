@@ -6,8 +6,9 @@ import logging
 from typing import Any
 
 import paho.mqtt.client as mqtt
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -125,6 +126,26 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 async def health_check() -> dict[str, str]:
     """Health check endpoint."""
     return {"status": "healthy", "service": "amr-fleet-api"}
+
+
+class DispatchRequest(BaseModel):
+    x: int
+    y: int
+
+
+@app.post("/api/dispatch/{agent_id}")
+async def dispatch_agent(agent_id: str, request: DispatchRequest) -> dict[str, Any]:
+    """Dispatch an agent to a new target coordinate."""
+    global mqtt_client
+    if not mqtt_client:
+        raise HTTPException(status_code=503, detail="MQTT client not initialized")
+
+    payload = {"x": request.x, "y": request.y}
+    topic = f"fleet/dispatch/{agent_id}"
+    mqtt_client.publish(topic, json.dumps(payload), qos=1)
+    logger.info(f"Dispatched {agent_id} to ({request.x}, {request.y})")
+
+    return {"status": "dispatched", "agent": agent_id, "target": [request.x, request.y]}
 
 
 if __name__ == "__main__":
