@@ -44,6 +44,7 @@ class AMRAgent:
         self.static_obstacles = static_obstacles
         self.goal: tuple[int, int] | None = None
         self.current_goal: tuple[int, int] | None = None
+        self.battery = 100.0
 
         # MQTT client setup
         self.client = mqtt.Client(client_id=agent_id, clean_session=True)
@@ -176,11 +177,20 @@ class AMRAgent:
         """
         self.local_time = payload.get("time", self.local_time)
 
+        # Track previous position to detect movement
+        prev_pos = self.current_pos
+
         # Advance along path if current time matches a path node
         for x, y, t in self.current_path:
             if t == self.local_time:
                 self.current_pos = (x, y)
                 break
+
+        # Update battery: moving costs 0.5, idle/yielding costs 0.1
+        if self.current_pos != prev_pos:
+            self.battery = max(0.0, self.battery - 0.5)
+        else:
+            self.battery = max(0.0, self.battery - 0.1)
 
         # Publish telemetry
         telemetry = {
@@ -188,6 +198,7 @@ class AMRAgent:
             "x": self.current_pos[0],
             "y": self.current_pos[1],
             "time": self.local_time,
+            "battery": round(self.battery, 1),
         }
         self.client.publish("fleet/telemetry", json.dumps(telemetry), qos=1)
 
