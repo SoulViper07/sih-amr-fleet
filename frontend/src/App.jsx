@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Activity, Clock, Cpu, Battery, Zap, MapPin, Target } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Activity, Clock, Cpu, Battery, Zap, MapPin, Target, Terminal, Wifi } from 'lucide-react';
 
 const WS_URL = 'ws://localhost:8000/ws';
 const API_URL = 'http://localhost:8000';
@@ -9,6 +9,21 @@ export default function App() {
   const [time, setTime] = useState(0);
   const [isConnected, setIsConnected] = useState(false);
   const [selectedAgent, setSelectedAgent] = useState('AMR-1');
+  const [gridSize, setGridSize] = useState({ w: 20, h: 20 });
+  const [obstacles, setObstacles] = useState([]);
+  const [logs, setLogs] = useState([]);
+  const prevRobotPositions = useRef({});
+
+  // Fetch grid config on mount
+  useEffect(() => {
+    fetch(`${API_URL}/api/config`)
+      .then(res => res.json())
+      .then(data => {
+        setGridSize({ w: data.grid_size[0], h: data.grid_size[1] });
+        setObstacles(data.obstacles);
+      })
+      .catch(err => console.error('Failed to fetch config:', err));
+  }, []);
 
   useEffect(() => {
     // Using standard Native WebSockets - bulletproof!
@@ -24,9 +39,20 @@ export default function App() {
           setTime(data.time);
         }
         if (data.agent_id && data.x !== undefined && data.y !== undefined) {
+          // Detect yielding: position unchanged but time advanced
+          const prev = prevRobotPositions.current[data.agent_id];
+          if (prev && prev.x === data.x && prev.y === data.y && prev.time !== data.time) {
+            setLogs(prevLogs => {
+              const newLog = `[${data.time}] ${data.agent_id} (Priority ${data.priority}) yielding right-of-way.`;
+              const updated = [newLog, ...prevLogs].slice(0, 8);
+              return updated;
+            });
+          }
+          prevRobotPositions.current[data.agent_id] = { x: data.x, y: data.y, time: data.time };
+          
           setRobots(prev => ({
             ...prev,
-            [data.agent_id]: { x: data.x, y: data.y, battery: data.battery ?? 100 }
+            [data.agent_id]: { x: data.x, y: data.y, battery: data.battery ?? 100, priority: data.priority }
           }));
         }
       } catch (err) {
@@ -53,10 +79,10 @@ export default function App() {
     }
   };
 
-  // 10x10 Grid generator
-  const gridCells = Array.from({ length: 100 }, (_, i) => {
-    const x = i % 10;
-    const y = Math.floor(i / 10);
+  // Dynamic grid generator based on gridSize
+  const gridCells = Array.from({ length: gridSize.w * gridSize.h }, (_, i) => {
+    const x = i % gridSize.w;
+    const y = Math.floor(i / gridSize.w);
     return { x, y };
   });
 
@@ -72,6 +98,10 @@ export default function App() {
     if (level > 25) return <Battery className="w-4 h-4 text-amber-400" />;
     if (level > 10) return <Zap className="w-4 h-4 text-amber-500" />;
     return <Zap className="w-4 h-4 text-red-500 animate-pulse" />;
+  };
+
+  const isObstacleCell = (x, y) => {
+    return obstacles.some(obs => obs[0] === x && obs[1] === y);
   };
 
   return (
@@ -99,32 +129,48 @@ export default function App() {
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-semibold flex items-center gap-2">
               <MapPin className="w-5 h-5 text-amber-500" />
-              Warehouse Grid (10×10) — Click to Dispatch
+              Warehouse Grid ({gridSize.w}×{gridSize.h}) — Click to Dispatch
             </h2>
             <div className="flex items-center gap-2 text-sm text-zinc-400">
               <Target className="w-4 h-4 text-amber-500" />
               <span>Selected: <strong className="text-amber-400">{selectedAgent}</strong></span>
             </div>
           </div>
-          <div className="aspect-square w-full max-w-2xl mx-auto">
-            <div className="w-full h-full grid grid-cols-10 grid-rows-10 border border-zinc-700 bg-zinc-950">
+          <div className="aspect-square w-full max-w-3xl mx-auto">
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: `repeat(${gridSize.w}, 1fr)`,
+                gridTemplateRows: `repeat(${gridSize.h}, 1fr)`,
+                width: '100%',
+                height: '100%',
+                border: '1px solid #3f3f46',
+                backgroundColor: '#09090b'
+              }}
+            >
               {gridCells.map((cell) => {
                 const isRobotHere = Object.entries(robots).find(([id, pos]) => pos.x === cell.x && pos.y === cell.y);
+                const isObstacle = isObstacleCell(cell.x, cell.y);
                 return (
                   <div
                     key={`${cell.x}-${cell.y}`}
-                    onClick={() => !isRobotHere && handleCellClick(cell.x, cell.y)}
-                    className={`border border-zinc-800/50 relative flex items-center justify-center cursor-pointer hover:bg-zinc-800 transition-colors ${isRobotHere ? 'cursor-default' : ''}`}
-                    style={{ userSelect: 'none' }}
+                    onClick={() => !isRobotHere && !isObstacle && handleCellClick(cell.x, cell.y)}
+                    className={`relative flex items-center justify-center cursor-pointer transition-colors ${
+                      isRobotHere ? 'cursor-default' : ''
+                    } ${isObstacle ? 'cursor-not-allowed' : 'hover:bg-zinc-800'}`}
+                    style={{ userSelect: 'none', border: '1px solid #27272a' }}
                   >
+                    {isObstacle && (
+                      <div className="absolute inset-0 bg-zinc-700/60 pointer-events-none" style={{ backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 4px, #52525b 4px, #52525b 8px)' }} />
+                    )}
                     {isRobotHere && (
-                      <div className="w-3/4 h-3/4 bg-amber-500 rounded-full shadow-[0_0_15px_rgba(245,158,11,0.6)] animate-pulse flex items-center justify-center">
+                      <div className="w-3/4 h-3/4 bg-amber-500 rounded-full shadow-[0_0_15px_rgba(245,158,11,0.6)] animate-pulse flex items-center justify-center z-10">
                         <span className="text-[10px] font-bold text-zinc-900">
                           {isRobotHere[0].split('-')[1]}
                         </span>
                       </div>
                     )}
-                    {!isRobotHere && (
+                    {!isRobotHere && !isObstacle && (
                       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                         <div className="w-2 h-2 rounded-full bg-zinc-700/50" />
                       </div>
@@ -134,14 +180,18 @@ export default function App() {
               })}
             </div>
           </div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <div className="flex items-center gap-2 text-sm text-zinc-400">
+          <div className="mt-4 flex flex-wrap gap-2 text-sm text-zinc-400">
+            <div className="flex items-center gap-2">
               <div className="w-3 h-3 rounded-full bg-zinc-950 border border-zinc-800" />
               <span>Empty Cell (Clickable)</span>
             </div>
-            <div className="flex items-center gap-2 text-sm text-zinc-400">
+            <div className="flex items-center gap-2">
               <div className="w-3 h-3 rounded-full bg-amber-500/20 border-2 border-amber-400" />
               <span>AMR Position</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-zinc-700/60" style={{ backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 4px, #52525b 4px, #52525b 8px)' }} />
+              <span>Static Obstacle</span>
             </div>
           </div>
         </div>
@@ -154,12 +204,12 @@ export default function App() {
               <Target className="w-6 h-6 text-amber-500" />
               <h2 className="text-xl font-semibold">Commander Controls</h2>
             </div>
-            <div className="flex gap-2">
-              {['AMR-1', 'AMR-2'].map((agent) => (
+            <div className="grid grid-cols-2 gap-2">
+              {['AMR-1', 'AMR-2', 'AMR-3', 'AMR-4'].map((agent) => (
                 <button
                   key={agent}
                   onClick={() => setSelectedAgent(agent)}
-                  className={`flex-1 px-4 py-3 rounded-lg font-medium text-sm transition-all ${
+                  className={`px-4 py-3 rounded-lg font-medium text-sm transition-all ${
                     selectedAgent === agent
                       ? 'bg-amber-500/20 border-2 border-amber-500 text-amber-300'
                       : 'bg-zinc-950 border border-zinc-800 text-zinc-300 hover:border-zinc-700 hover:bg-zinc-900'
@@ -168,6 +218,26 @@ export default function App() {
                   {agent}
                 </button>
               ))}
+            </div>
+          </div>
+
+          {/* P2P Network Feed */}
+          <div className="bg-zinc-900 p-6 rounded-xl border border-zinc-800">
+            <div className="flex items-center gap-3 mb-4">
+              <Terminal className="w-6 h-6 text-green-500" />
+              <h2 className="text-xl font-semibold">P2P Network Feed</h2>
+            </div>
+            <div className="h-64 overflow-y-auto bg-black rounded-lg border border-zinc-800 p-3 font-mono text-xs text-green-400 font-mono">
+              {logs.length === 0 ? (
+                <div className="text-zinc-500 italic">Waiting for yield events...</div>
+              ) : (
+                logs.map((log, idx) => (
+                  <div key={idx} className="mb-1 border-b border-zinc-800/50 pb-1 last:border-0">
+                    <span className="text-zinc-400">[FEED] </span>
+                    <span>{log}</span>
+                  </div>
+                ))
+              )}
             </div>
           </div>
 
@@ -192,7 +262,7 @@ export default function App() {
                     <span className="font-mono font-medium text-amber-500">{id}</span>
                     <span className="font-mono text-zinc-300 text-sm">({pos.x}, {pos.y})</span>
                   </div>
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 mb-2">
                     <div className="flex-shrink-0">{getBatteryIcon(pos.battery)}</div>
                     <div className="flex-1 w-full bg-zinc-800 rounded-full h-1.5">
                       <div
@@ -202,6 +272,12 @@ export default function App() {
                     </div>
                     <span className={`font-mono text-sm w-12 text-right ${pos.battery > 50 ? 'text-green-400' : pos.battery > 20 ? 'text-amber-400' : 'text-red-400'}`}>
                       {pos.battery}%
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs text-zinc-400">
+                    <span className="flex items-center gap-1">
+                      <Wifi className="w-3 h-3" />
+                      Pri: {pos.priority ?? 'N/A'}
                     </span>
                   </div>
                 </div>
