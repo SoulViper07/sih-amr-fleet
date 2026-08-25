@@ -43,6 +43,7 @@ class AMRAgent:
         self.grid_height = grid_height
         self.static_obstacles = static_obstacles
         self.goal: tuple[int, int] | None = None
+        self.current_goal: tuple[int, int] | None = None
 
         # MQTT client setup
         self.client = mqtt.Client(client_id=agent_id, clean_session=True)
@@ -121,13 +122,51 @@ class AMRAgent:
             logger.warning(f"Agent {self.agent_id} received invalid path from {sender_id}")
             return
 
+        peer_path: list[State] = []
         for node in path:
             if not isinstance(node, list) or len(node) != 3:
                 continue
             x, y, t = node
+            peer_path.append((x, y, t))
             if t not in self.dynamic_reservations:
                 self.dynamic_reservations[t] = set()
             self.dynamic_reservations[t].add((x, y))
+
+        # Check for conflicts with our current path
+        if self._check_conflict(peer_path):
+            # Resolve conflict: higher ID yields
+            if self.agent_id > sender_id:
+                logger.warning(
+                    f"Agent {self.agent_id}: Conflict detected with {sender_id}. "
+                    f"Yielding and replanning."
+                )
+                if self.current_goal:
+                    self.plan_to_goal(*self.current_goal)
+
+    def _check_conflict(self, peer_path: list[State]) -> bool:
+        """Check for vertex collision between peer path and our current path.
+
+        Args:
+            peer_path: List of (x, y, t) tuples from another agent.
+
+        Returns:
+            True if vertex collision detected at t >= local_time, False otherwise.
+        """
+        if not self.current_path:
+            return False
+
+        # Build a set of our future positions for fast lookup
+        our_future: dict[int, tuple[int, int]] = {}
+        for x, y, t in self.current_path:
+            if t >= self.local_time:
+                our_future[t] = (x, y)
+
+        # Check peer path against our future positions
+        for x, y, t in peer_path:
+            if t >= self.local_time and t in our_future:
+                if our_future[t] == (x, y):
+                    return True  # Vertex collision
+        return False
 
     def _handle_clock(self, payload: dict) -> None:
         """Process global clock tick and update position along current path.
@@ -162,6 +201,7 @@ class AMRAgent:
         Returns:
             True if path found, False otherwise.
         """
+        self.current_goal = (goal_x, goal_y)
         self.goal = (goal_x, goal_y)
         start_x, start_y = self.current_pos
 
