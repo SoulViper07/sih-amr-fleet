@@ -21,27 +21,27 @@ class AMRAgent:
         self,
         agent_id: str,
         start_pos: tuple[int, int],
-        grid_width: int,
-        grid_height: int,
-        static_obstacles: set[tuple[int, int]],
+        grid_size: tuple[int, int] = (20, 20),
+        obstacles: set[tuple[int, int]] | None = None,
+        priority: int = 1,
     ) -> None:
         """Initialize the AMR agent.
 
         Args:
             agent_id: Unique identifier for this agent.
             start_pos: Starting (x, y) coordinate.
-            grid_width: Width of the warehouse grid.
-            grid_height: Height of the warehouse grid.
-            static_obstacles: Set of (x, y) coordinates representing permanent obstacles.
+            grid_size: Tuple (width, height) of the warehouse grid.
+            obstacles: Set of (x, y) coordinates representing permanent obstacles.
+            priority: Priority level (higher number = higher priority). Default 1.
         """
         self.agent_id = agent_id
         self.current_pos = start_pos
         self.current_path: list[State] = []
         self.dynamic_reservations: dict[int, set[tuple[int, int]]] = {}
         self.local_time = 0
-        self.grid_width = grid_width
-        self.grid_height = grid_height
-        self.static_obstacles = static_obstacles
+        self.grid_size = grid_size
+        self.obstacles = obstacles if obstacles is not None else set()
+        self.priority = priority
         self.goal: tuple[int, int] | None = None
         self.current_goal: tuple[int, int] | None = None
         self.battery = 100.0
@@ -115,10 +115,11 @@ class AMRAgent:
         """Process peer robot's path intent and update dynamic reservations.
 
         Args:
-            payload: JSON payload containing sender_id and path.
+            payload: JSON payload containing sender_id, path, and priority.
         """
         sender_id = payload.get("sender_id")
         path = payload.get("path", [])
+        sender_priority = payload.get("priority", 1)
 
         if sender_id == self.agent_id:
             return  # Ignore own broadcasts
@@ -139,10 +140,10 @@ class AMRAgent:
 
         # Check for conflicts with our current path
         if self._check_conflict(peer_path):
-            # Resolve conflict: higher ID yields
-            if self.agent_id > sender_id:
+            # Resolve conflict: lower priority yields. If equal, higher agent_id yields.
+            if self.priority < sender_priority or (self.priority == sender_priority and self.agent_id > sender_id):
                 logger.warning(
-                    f"Agent {self.agent_id}: Conflict detected with {sender_id}. "
+                    f"Agent {self.agent_id}: Conflict detected with {sender_id} (priority {sender_priority}). "
                     f"Yielding and replanning."
                 )
                 if self.current_goal:
@@ -203,6 +204,7 @@ class AMRAgent:
             "y": self.current_pos[1],
             "time": self.local_time,
             "battery": round(self.battery, 1),
+            "priority": self.priority,
         }
         self.client.publish("fleet/telemetry", json.dumps(telemetry), qos=1)
 
@@ -239,9 +241,9 @@ class AMRAgent:
         path = time_space_astar(
             start=(start_x, start_y),
             goal=(goal_x, goal_y),
-            grid_width=self.grid_width,
-            grid_height=self.grid_height,
-            static_obstacles=self.static_obstacles,
+            grid_width=self.grid_size[0],
+            grid_height=self.grid_size[1],
+            static_obstacles=self.obstacles,
             dynamic_reservations=self.dynamic_reservations,
             max_time=self.local_time + 100,  # Reasonable horizon
         )
@@ -261,6 +263,7 @@ class AMRAgent:
             "sender_id": self.agent_id,
             "path": adjusted_path,
             "timestamp": self.local_time,
+            "priority": self.priority,
         }
         self.client.publish("fleet/intents", json.dumps(intent), qos=1, retain=False)
         logger.info(f"Agent {self.agent_id}: Path planned to ({goal_x}, {goal_y}), length={len(adjusted_path)}")
@@ -279,4 +282,6 @@ class AMRAgent:
             "goal": self.goal,
             "path_length": len(self.current_path),
             "reservations_count": sum(len(s) for s in self.dynamic_reservations.values()),
+            "priority": self.priority,
+            "battery": round(self.battery, 1),
         }
