@@ -29,8 +29,8 @@ logger = logging.getLogger(__name__)
 
 BROKER = "localhost"
 PORT = 1883
-GRID_WIDTH = 10
-GRID_HEIGHT = 10
+GRID_SIZE = (20, 20)
+OBSTACLES = [(5, 5), (5, 6), (5, 7), (10, 10), (11, 10), (12, 10), (13, 10), (15, 15)]
 
 
 class Coordinator:
@@ -77,33 +77,49 @@ class Coordinator:
 
 def main() -> None:
     logger.info("=" * 60)
-    logger.info("Starting Multi-Robot Warehouse Simulation")
+    logger.info("Starting Multi-Robot Warehouse Simulation (20x20, 4 AMRs)")
     logger.info("=" * 60)
 
-    # Create grid (10x10, no static obstacles)
-    grid = WarehouseGrid(width=GRID_WIDTH, height=GRID_HEIGHT, obstacles=[])
-    logger.info(f"Grid created: {GRID_WIDTH}x{GRID_HEIGHT}")
+    # Create grid (20x20 with static obstacles)
+    grid = WarehouseGrid(width=GRID_SIZE[0], height=GRID_SIZE[1], obstacles=OBSTACLES)
+    logger.info(f"Grid created: {GRID_SIZE[0]}x{GRID_SIZE[1]} with {len(OBSTACLES)} obstacles")
 
-    # Create agents
+    # Create agents with different priorities
     agent1 = AMRAgent(
         agent_id="AMR-1",
-        start_pos=(0, 5),
-        grid_width=GRID_WIDTH,
-        grid_height=GRID_HEIGHT,
-        static_obstacles=grid.obstacles,
+        start_pos=(0, 0),
+        grid_size=GRID_SIZE,
+        obstacles=set(OBSTACLES),
+        priority=4,
     )
     agent2 = AMRAgent(
         agent_id="AMR-2",
-        start_pos=(5, 0),
-        grid_width=GRID_WIDTH,
-        grid_height=GRID_HEIGHT,
-        static_obstacles=grid.obstacles,
+        start_pos=(19, 0),
+        grid_size=GRID_SIZE,
+        obstacles=set(OBSTACLES),
+        priority=3,
     )
+    agent3 = AMRAgent(
+        agent_id="AMR-3",
+        start_pos=(0, 19),
+        grid_size=GRID_SIZE,
+        obstacles=set(OBSTACLES),
+        priority=2,
+    )
+    agent4 = AMRAgent(
+        agent_id="AMR-4",
+        start_pos=(19, 19),
+        grid_size=GRID_SIZE,
+        obstacles=set(OBSTACLES),
+        priority=1,
+    )
+
+    agents = [agent1, agent2, agent3, agent4]
 
     # Connect agents
     logger.info("Connecting agents to broker...")
-    agent1.connect(BROKER, PORT)
-    agent2.connect(BROKER, PORT)
+    for agent in agents:
+        agent.connect(BROKER, PORT)
 
     # Create coordinator
     coordinator = Coordinator()
@@ -112,26 +128,29 @@ def main() -> None:
     # Wait for connections to establish
     time.sleep(1)
 
-    # Plan paths
+    # Plan paths (cross the grid)
     logger.info("Planning paths...")
-    agent1.plan_to_goal(9, 5)  # Left to right across row 5
-    agent2.plan_to_goal(5, 9)  # Top to bottom down column 5
+    agent1.plan_to_goal(19, 19)  # Bottom-left to top-right
+    agent2.plan_to_goal(0, 19)   # Bottom-right to top-left
+    agent3.plan_to_goal(19, 0)   # Top-left to bottom-right
+    agent4.plan_to_goal(0, 0)    # Top-right to bottom-left
 
     # Wait for intents to propagate
     time.sleep(1)
 
-    logger.info("Starting simulation loop (t=0 to 15)")
-    logger.info("Watch for collision avoidance at intersection (5, 5)")
+    logger.info("Starting simulation loop (t=0 to 30)")
+    logger.info("Watch for collision avoidance and priority-based yielding")
     logger.info("-" * 60)
 
-    # Simulation loop
-    for t in range(16):
+    # Simulation loop (longer for 20x20 grid)
+    for t in range(31):
         coordinator.publish_clock(t)
         time.sleep(0.5)
 
         positions = coordinator.get_positions()
         pos_str = ", ".join(
-            f"{aid}: ({p['x']}, {p['y']})" for aid, p in positions.items()
+            f"{aid}: ({p['x']}, {p['y']}) bat={p.get('battery', 'N/A')} pri={p.get('priority', 'N/A')}"
+            for aid, p in positions.items()
         )
         logger.info(f"t={t:2d} | {pos_str}")
 
@@ -139,8 +158,8 @@ def main() -> None:
     logger.info("Simulation complete")
 
     # Cleanup
-    agent1.disconnect()
-    agent2.disconnect()
+    for agent in agents:
+        agent.disconnect()
     coordinator.disconnect()
 
 

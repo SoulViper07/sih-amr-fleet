@@ -13,6 +13,10 @@ from pydantic import BaseModel
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Global configuration
+GRID_SIZE = [20, 20]
+OBSTACLES = [[5, 5], [5, 6], [5, 7], [10, 10], [11, 10], [12, 10], [13, 10], [15, 15]]
+
 app = FastAPI(title="AMR Fleet API", version="1.0.0")
 
 app.add_middleware(
@@ -126,6 +130,12 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 async def health_check() -> dict[str, str]:
     """Health check endpoint."""
     return {"status": "healthy", "service": "amr-fleet-api"}
+
+
+@app.get("/api/config")
+async def get_config() -> dict[str, Any]:
+    """Return grid configuration."""
+    return {"grid_size": GRID_SIZE, "obstacles": OBSTACLES}
 
 
 class DispatchRequest(BaseModel):
