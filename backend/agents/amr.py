@@ -80,6 +80,8 @@ class AMRAgent:
             # Subscribe to fleet topics
             client.subscribe("fleet/intents", qos=1)
             client.subscribe("fleet/clock", qos=1)
+            # Subscribe to dispatch commands for this agent
+            client.subscribe(f"fleet/dispatch/{self.agent_id}", qos=1)
         else:
             logger.error(f"Agent {self.agent_id} connection failed with code {rc}")
 
@@ -106,6 +108,8 @@ class AMRAgent:
             self._handle_intent(payload)
         elif topic == "fleet/clock":
             self._handle_clock(payload)
+        elif topic.startswith("fleet/dispatch/"):
+            self._handle_dispatch(payload)
 
     def _handle_intent(self, payload: dict) -> None:
         """Process peer robot's path intent and update dynamic reservations.
@@ -201,6 +205,21 @@ class AMRAgent:
             "battery": round(self.battery, 1),
         }
         self.client.publish("fleet/telemetry", json.dumps(telemetry), qos=1)
+
+    def _handle_dispatch(self, payload: dict) -> None:
+        """Handle dispatch command to navigate to a new target.
+
+        Args:
+            payload: JSON payload containing x and y coordinates.
+        """
+        x = payload.get("x")
+        y = payload.get("y")
+        if x is None or y is None:
+            logger.warning(f"Agent {self.agent_id}: Invalid dispatch payload {payload}")
+            return
+
+        logger.info(f"Agent {self.agent_id}: Received dispatch command to ({x}, {y})")
+        self.plan_to_goal(x, y)
 
     def plan_to_goal(self, goal_x: int, goal_y: int) -> bool:
         """Plan a path to the goal using Time-Space A* and broadcast intent.
