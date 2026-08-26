@@ -46,17 +46,30 @@ const robotColors = [
 const AmrMesh = React.memo(({ id, index, targetPosition, battery, priority }) => {
   const meshRef = useRef();
   const [hovered, setHovered] = useState(false);
+  
+  // Initialize position state safely to prevent NaN matrix crashes
+  const [pos] = useState(() => {
+    const initialPos = targetPosition && targetPosition.length === 3 && 
+      targetPosition.every(v => typeof v === 'number' && !isNaN(v))
+      ? new THREE.Vector3(targetPosition[0], targetPosition[1], targetPosition[2])
+      : new THREE.Vector3(0, 0, 0);
+    return initialPos;
+  });
 
   useFrame((state, delta) => {
-    if (meshRef.current && targetPosition) {
-      meshRef.current.position.lerp(new THREE.Vector3(...targetPosition), Math.min(delta * 8, 1));
+    if (meshRef.current && targetPosition && Array.isArray(targetPosition) && targetPosition.length === 3) {
+      const target = new THREE.Vector3(targetPosition[0], targetPosition[1], targetPosition[2]);
+      if (!isNaN(target.x) && !isNaN(target.y) && !isNaN(target.z)) {
+        pos.lerp(target, Math.min(delta * 8, 1));
+        meshRef.current.position.copy(pos);
+      }
     }
   });
 
   const color = robotColors[index % robotColors.length];
 
   return (
-    <group ref={meshRef} position={targetPosition || [0, 0, 0]}>
+    <group ref={meshRef} position={pos}>
       <Box
         args={[0.7, 0.7, 0.7]}
         position={[0, 0.35, 0]}
@@ -315,20 +328,19 @@ const DashboardPanel = ({
             <div className="text-neutral-500 italic">AWAITING YIELD EVENTS...</div>
           ) : (
             <AnimatePresence>
-              {logs.map((log, idx) => (
-                <motion.div
-                  key={log + idx}
-                  initial={{ opacity: 0, y: -20, scale: 0.95 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.9 }}
-                  transition={{ duration: 0.3 }}
-                  className="mb-1 pb-1 last:mb-0 border-b border-neutral-700/50"
-                >
-                  <span className="text-yellow-500">[FEED] </span>
-                  <span>{log}</span>
-                </motion.div>
-              ))
-            </AnimatePresence>
+            {logs.map((log, index) => (
+              <motion.div 
+                key={index}
+                initial={{ opacity: 0, y: -20, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                transition={{ duration: 0.3 }}
+                className="mb-2 text-yellow-100/80 font-mono text-sm"
+              >
+                {log}
+              </motion.div>
+            ))}
+          </AnimatePresence>
           )}
         </div>
       </div>
@@ -423,7 +435,7 @@ export default function App() {
     <div className="h-screen w-screen overflow-hidden bg-neutral-950 text-amber-50 flex">
       <div className="w-2/3 h-full relative">
         <Canvas
-          camera={{ position: [0, 25, 0], fov: 50, lookAt: [0, 0, 0] }}
+          camera={{ position: [0, 25, 30], fov: 50 }}
           shadows
           style={{ touchAction: 'none' }}
           onCreated={({ gl }) => { gl.setClearColor(0x0a0a0a, 1); }}
@@ -435,6 +447,7 @@ export default function App() {
           />
           <OrbitControls 
             makeDefault 
+            target={[0, 0, 0]}
             enablePan={true}
             enableZoom={true}
             enableRotate={true}
