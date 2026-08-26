@@ -770,9 +770,10 @@ const DashboardPanel = ({
 };
 
 /* =========================================================================
-   MAIN APP COMPONENT (Bypasses React state for 60fps 3D AMR rendering)
+   MAIN APP COMPONENT (WebSocket Singleton & Render Decoupling)
    ========================================================================= */
 export default function App() {
+  const wsRef = useRef(null);
   const robotsRef = useRef({});
   const [robotIds, setRobotIds] = useState([]);
   const [telemetryRobots, setTelemetryRobots] = useState({});
@@ -822,8 +823,8 @@ export default function App() {
       }
       setTelemetryRobots({ ...robotsRef.current });
       setLogs(prev => [{
-        id: `${time}-${agentId}-sabotage-${Date.now()}`,
-        time: time,
+        id: `${Date.now()}-${agentId}-sabotage`,
+        time: robotsRef.current[agentId]?.time ?? 0,
         agentId: agentId,
         status: "DEAD",
         type: "FAILURE",
@@ -835,9 +836,12 @@ export default function App() {
     }
   };
 
-  // WebSocket for real-time telemetry & auction bridge (ref-based for 60fps)
+  // WebSocket Singleton isolated from React render cycle
   useEffect(() => {
-    const ws = new WebSocket(WS_URL);
+    if (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED) {
+      wsRef.current = new WebSocket(WS_URL);
+    }
+    const ws = wsRef.current;
 
     ws.onopen = () => setIsConnected(true);
     ws.onclose = () => setIsConnected(false);
@@ -845,7 +849,7 @@ export default function App() {
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        const simTime = data.time ?? time;
+        const simTime = data.time ?? 0;
         if (data.time !== undefined) {
           setTime(data.time);
           setTelemetryRobots({ ...robotsRef.current });
@@ -869,8 +873,8 @@ export default function App() {
             priority: data.priority ?? prev?.priority ?? 1,
           };
 
-          // Only update setRobotIds if data.agent_id is not already in the array
-          setRobotIds(prevIds => (prevIds.includes(data.agent_id) ? prevIds : [...prevIds, data.agent_id]));
+          // Prevent Array Thrashing: Update setRobotIds only if ID is genuinely missing
+          setRobotIds(prev => (prev.includes(data.agent_id) ? prev : [...prev, data.agent_id]));
 
           // Throttle P2P feed logs: Only append to setLogs if data.status !== "MOVING" and data.status !== "IDLE"
           const rawStatus = (data.status || "").toUpperCase();
@@ -940,8 +944,12 @@ export default function App() {
       }
     };
 
-    return () => ws.close();
-  }, [time]);
+    return () => {
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.close();
+      }
+    };
+  }, []);
 
   // Raycasting Click-to-Deploy on floor plane
   const handleFloorClick = async (event) => {
@@ -968,7 +976,7 @@ export default function App() {
 
     // Log user dispatch event in P2P Terminal
     setLogs(prev => [{
-      id: `${time}-dispatch-${beaconId}`,
+      id: `${beaconId}-dispatch`,
       time: time,
       agentId: selectedAgent,
       status: "DISPATCH",
