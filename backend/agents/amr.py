@@ -74,21 +74,21 @@ class AMRAgent:
         try:
             self.client.connect(broker, port, keepalive=60)
             self.client.loop_start()
-            logger.info(f"Agent {self.agent_id} connected to {broker}:{port}")
+            # logger.info(f"Agent {self.agent_id} connected to {broker}:{port}")
         except Exception as e:
-            logger.error(f"Agent {self.agent_id} failed to connect: {e}")
+            # logger.error(f"Agent {self.agent_id} failed to connect: {e}")
             raise
 
     def disconnect(self) -> None:
         """Disconnect from MQTT broker and stop network loop."""
         self.client.loop_stop()
         self.client.disconnect()
-        logger.info(f"Agent {self.agent_id} disconnected")
+        # logger.info(f"Agent {self.agent_id} disconnected")
 
     def _on_connect(self, client: mqtt.Client, userdata: object, flags: dict, rc: int) -> None:
         """Callback for when the client connects to the broker."""
         if rc == 0:
-            logger.info(f"Agent {self.agent_id} connected successfully")
+            # logger.info(f"Agent {self.agent_id} connected successfully")
             # Subscribe to fleet topics
             client.subscribe("fleet/intents", qos=1)
             client.subscribe("fleet/clock", qos=1)
@@ -96,11 +96,13 @@ class AMRAgent:
             # Subscribe to dispatch commands for this agent
             client.subscribe(f"fleet/dispatch/{self.agent_id}", qos=1)
         else:
-            logger.error(f"Agent {self.agent_id} connection failed with code {rc}")
+            # logger.error(f"Agent {self.agent_id} connection failed with code {rc}")
+            pass
 
     def _on_disconnect(self, client: mqtt.Client, userdata: object, rc: int) -> None:
         """Callback for when the client disconnects from the broker."""
-        logger.warning(f"Agent {self.agent_id} disconnected with code {rc}")
+        # logger.warning(f"Agent {self.agent_id} disconnected with code {rc}")
+        pass
 
     def _on_message(self, client: mqtt.Client, userdata: object, msg: mqtt.MQTTMessage) -> None:
         """Handle incoming MQTT messages.
@@ -114,7 +116,7 @@ class AMRAgent:
         try:
             payload = json.loads(msg.payload.decode())
         except json.JSONDecodeError as e:
-            logger.error(f"Agent {self.agent_id} failed to parse message: {e}")
+            # logger.error(f"Agent {self.agent_id} failed to parse message: {e}")
             return
 
         if topic == "fleet/intents":
@@ -148,10 +150,10 @@ class AMRAgent:
                 if isinstance(last_node, list) and len(last_node) >= 2:
                     dead_x, dead_y = last_node[0], last_node[1]
                     self.dynamic_obstacles.add((dead_x, dead_y))
-                    logger.warning(f"Agent {self.agent_id}: Added dead agent {sender_id} at ({dead_x}, {dead_y}) as dynamic obstacle")
+                    # logger.warning(f"Agent {self.agent_id}: Added dead agent {sender_id} at ({dead_x}, {dead_y}) as dynamic obstacle")
 
         if not isinstance(path, list):
-            logger.warning(f"Agent {self.agent_id} received invalid path from {sender_id}")
+            # logger.warning(f"Agent {self.agent_id} received invalid path from {sender_id}")
             return
 
         peer_path: list[State] = []
@@ -189,17 +191,18 @@ class AMRAgent:
                             other_x, other_y = first_node[0], first_node[1]
                             self.dynamic_obstacles.add((other_x, other_y))
                     
-                    logger.warning(
-                        f"Agent {self.agent_id} (pri={self.priority}): Conflict with {sender_id} "
-                        f"(pri={sender_priority}). YIELDING for 3s. Added ({other_x}, {other_y}) as obstacle."
-                    )
+                    # logger.warning(
+                    #     f"Agent {self.agent_id} (pri={self.priority}): Conflict with {sender_id} "
+                    #     f"(pri={sender_priority}). YIELDING for 3s. Added ({other_x}, {other_y}) as obstacle."
+                    # )
                     
                     if self.current_goal:
                         self.plan_to_goal(*self.current_goal)
             else:
                 # Higher priority robot ignores conflict and continues
-                logger.debug(f"Agent {self.agent_id} (pri={self.priority}): Conflict with {sender_id} "
-                            f"(pri={sender_priority}). HIGHER PRIORITY - ignoring.")
+                # logger.debug(f"Agent {self.agent_id} (pri={self.priority}): Conflict with {sender_id} "
+                #             f"(pri={sender_priority}). HIGHER PRIORITY - ignoring.")
+                pass
 
     def _handle_bid(self, payload: dict) -> None:
         """Process peer robot's bid for a task.
@@ -224,8 +227,8 @@ class AMRAgent:
             # Lower bid cost wins (lower is better)
             if sender_bid_cost < self.bid_cost or (sender_bid_cost == self.bid_cost and sender_priority > self.priority):
                 # We lost the bid - reset our bidding state
-                logger.info(f"Agent {self.agent_id}: Lost bid for task ({task['x']}, {task['y']}) to {sender_id} "
-                           f"(our cost: {self.bid_cost:.1f}, their cost: {sender_bid_cost:.1f})")
+                # logger.info(f"Agent {self.agent_id}: Lost bid for task ({task['x']}, {task['y']}) to {sender_id} "
+                #            f"(our cost: {self.bid_cost:.1f}, their cost: {sender_bid_cost:.1f})")
                 self.pending_task = None
                 self.bid_cost = None
                 self.bid_broadcast_time = None
@@ -300,10 +303,11 @@ class AMRAgent:
                             "priority": self.priority,
                         }
                         self.client.publish("fleet/bids", json.dumps(bid_payload), qos=1)
-                        logger.info(f"Agent {self.agent_id}: Bid {self.bid_cost:.1f} for task ({task['x']}, {task['y']})")
+                        # logger.info(f"Agent {self.agent_id}: Bid {self.bid_cost:.1f} for task ({task['x']}, {task['y']})")
                         break  # Only bid on one task at a time
             except Exception as e:
-                logger.debug(f"Agent {self.agent_id}: Failed to poll tasks: {e}")
+                # logger.debug(f"Agent {self.agent_id}: Failed to poll tasks: {e}")
+                pass
 
         # Check if we won the bid (wait 1 tick after broadcasting)
         if (self.status == "DOCKED" and self.pending_task and self.bid_broadcast_time is not None 
@@ -360,7 +364,7 @@ class AMRAgent:
                     if should_wait:
                         self.status = "YIELDING"
                         self.yield_cooldown = current_time + 1.5  # Wait 1.5 seconds (3 ticks)
-                        logger.warning(f"Agent {self.agent_id}: Space-time conflict at {next_pos}, yielding for 1 tick")
+                        # logger.warning(f"Agent {self.agent_id}: Space-time conflict at {next_pos}, yielding for 1 tick")
                         # Don't advance this tick
                     else:
                         # Advance along path if current time matches a path node
@@ -409,10 +413,10 @@ class AMRAgent:
         x = payload.get("x")
         y = payload.get("y")
         if x is None or y is None:
-            logger.warning(f"Agent {self.agent_id}: Invalid dispatch payload {payload}")
+            # logger.warning(f"Agent {self.agent_id}: Invalid dispatch payload {payload}")
             return
 
-        logger.info(f"Agent {self.agent_id}: Received dispatch command to ({x}, {y})")
+        # logger.info(f"Agent {self.agent_id}: Received dispatch command to ({x}, {y})")
         self.plan_to_goal(x, y)
 
     def plan_to_goal(self, goal_x: int, goal_y: int) -> bool:
@@ -447,7 +451,7 @@ class AMRAgent:
         )
 
         if path is None:
-            logger.warning(f"Agent {self.agent_id}: No path found to ({goal_x}, {goal_y})")
+            # logger.warning(f"Agent {self.agent_id}: No path found to ({goal_x}, {goal_y})")
             self.current_path = []
             return False
 
@@ -465,7 +469,7 @@ class AMRAgent:
             "status": self.status,
         }
         self.client.publish("fleet/intents", json.dumps(intent), qos=1, retain=False)
-        logger.info(f"Agent {self.agent_id}: Path planned to ({goal_x}, {goal_y}), length={len(adjusted_path)}")
+        # logger.info(f"Agent {self.agent_id}: Path planned to ({goal_x}, {goal_y}), length={len(adjusted_path)}")
         return True
 
     def get_state(self) -> dict:
