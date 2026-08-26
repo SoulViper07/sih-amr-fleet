@@ -9,11 +9,11 @@ import { Clock, Cpu, Battery, Zap, Target, Terminal, Radio, Skull } from 'lucide
 
 const WS_URL = 'ws://localhost:8000/ws';
 const API_URL = 'http://localhost:8000';
-const GRID_SIZE = 20;
+const GRID_SIZE = 30;
 const GRID_HALF = GRID_SIZE / 2;
 
 const DEFAULT_CHARGING_STATIONS = [
-  [0, 0], [6, 0], [12, 0], [19, 0]
+  [2, 0], [7, 0], [12, 0], [17, 0], [22, 0], [27, 0]
 ];
 
 function gridToWorld(x, y) {
@@ -124,7 +124,8 @@ const AmrMesh = React.memo(({ id, robotsRef }) => {
   useEffect(() => {
     const data = robotsRef.current[id];
     if (meshRef.current && data) {
-      meshRef.current.position.set(data.x - 10, 0.5, data.y - 10);
+      const [wx, wy, wz] = gridToWorld(data.x, data.y);
+      meshRef.current.position.set(wx, wy, wz);
     }
   }, [id, robotsRef]);
 
@@ -132,7 +133,8 @@ const AmrMesh = React.memo(({ id, robotsRef }) => {
     const data = robotsRef.current[id];
     if (!data || !meshRef.current) return;
 
-    const target = new THREE.Vector3(data.x - 10, 0.5, data.y - 10);
+    const [wx, wy, wz] = gridToWorld(data.x, data.y);
+    const target = new THREE.Vector3(wx, wy, wz);
     meshRef.current.position.lerp(target, delta * 6);
 
     if (meshRef.current.position.distanceTo(target) > 0.01) {
