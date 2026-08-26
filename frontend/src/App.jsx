@@ -7,6 +7,12 @@ import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Clock, Cpu, Battery, Zap, Target, Terminal, Radio, Skull } from 'lucide-react';
 
+const originalWarn = console.warn;
+console.warn = (...args) => {
+  if (typeof args[0] === 'string' && args[0].includes('has been deprecated')) return;
+  originalWarn(...args);
+};
+
 const WS_URL = 'ws://localhost:8000/ws';
 const API_URL = 'http://localhost:8000';
 const GRID_SIZE = 30;
@@ -297,7 +303,7 @@ const Scene = ({ robotIds, robotsRef, obstacles, chargingStations, targetBeacons
 const SimulationCanvas = React.memo(({ robotIds, robotsRef, obstacles, chargingStations, targetBeacons, onFloorClick }) => {
   return (
     <div className="w-3/4 h-full relative">
-      <Canvas camera={{ position: [0, 24, 28], fov: 48 }} shadows style={{ touchAction: 'none' }}>
+      <Canvas camera={{ position: [0, 24, 28], fov: 48 }} shadows={{ type: THREE.PCFShadowMap }} style={{ touchAction: 'none' }}>
         <color attach="background" args={['#030712']} />
         <Scene robotIds={robotIds} robotsRef={robotsRef} obstacles={obstacles} chargingStations={chargingStations} targetBeacons={targetBeacons} onFloorClick={onFloorClick} />
         <EffectComposer disableNormalPass>
