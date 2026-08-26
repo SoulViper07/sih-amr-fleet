@@ -209,7 +209,7 @@ const TargetBeacon = React.memo(({ x, y }) => {
 });
 
 /* =========================================================================
-   AMR MESH COMPONENT (High-performance 60fps useFrame lerp via robotsRef)
+   AMR MESH COMPONENT (Pure Three.js 60fps useFrame lerping & lookAt)
    ========================================================================= */
 const AmrMesh = React.memo(({ id, robotsRef }) => {
   const meshRef = useRef();
@@ -219,15 +219,25 @@ const AmrMesh = React.memo(({ id, robotsRef }) => {
   });
   const lastStateRef = useRef({ status: '', battery: 100 });
 
+  // Initialize starting position explicitly on mount using ref
+  useEffect(() => {
+    const data = robotsRef.current[id];
+    if (meshRef.current && data) {
+      meshRef.current.position.set(data.x - 10, 0.5, data.y - 10);
+    }
+  }, [id, robotsRef]);
+
   useFrame((state, delta) => {
     const data = robotsRef.current[id];
-    if (!data) return;
+    if (!data || !meshRef.current) return;
 
-    // Construct the target vector
+    // Movement interpolation
     const target = new THREE.Vector3(data.x - 10, 0.5, data.y - 10);
-    if (meshRef.current) {
-      // Interpolate smoothly
-      meshRef.current.position.lerp(target, Math.min(1, delta * 10));
+    meshRef.current.position.lerp(target, delta * 6);
+
+    // Rotate to face direction of movement
+    if (meshRef.current.position.distanceTo(target) > 0.01) {
+      meshRef.current.lookAt(target.x, meshRef.current.position.y, target.z);
     }
 
     // Update visual state only when status or battery changes significantly
@@ -295,7 +305,7 @@ const AmrMesh = React.memo(({ id, robotsRef }) => {
   }
 
   return (
-    <group ref={meshRef} position={[0, 0.5, 0]}>
+    <group ref={meshRef}>
       <Box
         args={[0.7, 0.7, 0.7]}
         position={[0, 0.35, 0]}
@@ -412,6 +422,86 @@ const Scene = ({ robotIds, robotsRef, obstacles, chargingStations, targetBeacons
     </>
   );
 };
+
+/* =========================================================================
+   SIMULATION CANVAS COMPONENT (Memoized to prevent UI re-renders)
+   ========================================================================= */
+const SimulationCanvas = React.memo(({ 
+  robotIds, 
+  robotsRef, 
+  obstacles, 
+  chargingStations, 
+  targetBeacons, 
+  onFloorClick 
+}) => {
+  return (
+    <div className="w-3/4 h-full relative">
+      <Canvas
+        camera={{ position: [0, 24, 28], fov: 48 }}
+        shadows
+        style={{ touchAction: 'none' }}
+      >
+        <color attach="background" args={['#030712']} />
+        <Scene 
+          robotIds={robotIds} 
+          robotsRef={robotsRef} 
+          obstacles={obstacles} 
+          chargingStations={chargingStations}
+          targetBeacons={targetBeacons}
+          onFloorClick={onFloorClick} 
+        />
+        <EffectComposer disableNormalPass>
+          <Bloom luminanceThreshold={0.9} mipmapBlur intensity={1.6} />
+        </EffectComposer>
+        <OrbitControls 
+          makeDefault 
+          target={[0, 0, 0]}
+          enablePan={true}
+          enableZoom={true}
+          enableRotate={true}
+          minPolarAngle={0}
+          maxPolarAngle={Math.PI / 2 - 0.05}
+          minZoom={5}
+          maxZoom={60}
+        />
+      </Canvas>
+      
+      {/* Grid Legend Overlay */}
+      <div className="absolute bottom-4 left-4 right-4 flex flex-wrap justify-center gap-3 text-[11px] text-neutral-300 pointer-events-none">
+        <div className="flex items-center gap-1.5 bg-neutral-900/90 px-2.5 py-1 rounded border border-neutral-700 backdrop-blur">
+          <div className="w-2.5 h-2.5 rounded bg-cyan-400 shadow-[0_0_8px_rgba(6,182,212,0.8)]" />
+          <span className="font-mono">CHARGING DOCK</span>
+        </div>
+        <div className="flex items-center gap-1.5 bg-neutral-900/90 px-2.5 py-1 rounded border border-neutral-700 backdrop-blur">
+          <div className="w-2.5 h-2.5 rounded bg-slate-600 border border-slate-400" />
+          <span className="font-mono">3D RACK (OBSTACLE)</span>
+        </div>
+        <div className="flex items-center gap-1.5 bg-neutral-900/90 px-2.5 py-1 rounded border border-neutral-700 backdrop-blur">
+          <div className="w-2.5 h-2.5 rounded bg-cyan-400 shadow-[0_0_6px_rgba(6,182,212,0.9)]" />
+          <span className="font-mono">BIDDING</span>
+        </div>
+        <div className="flex items-center gap-1.5 bg-neutral-900/90 px-2.5 py-1 rounded border border-neutral-700 backdrop-blur">
+          <div className="w-2.5 h-2.5 rounded bg-yellow-400 shadow-[0_0_6px_rgba(234,179,8,0.9)]" />
+          <span className="font-mono">CLAIMED</span>
+        </div>
+        <div className="flex items-center gap-1.5 bg-neutral-900/90 px-2.5 py-1 rounded border border-neutral-700 backdrop-blur">
+          <div className="w-2.5 h-2.5 rounded bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.9)] animate-pulse" />
+          <span className="font-mono">DEAD (HAZARD)</span>
+        </div>
+        <div className="flex items-center gap-1.5 bg-neutral-900/90 px-2.5 py-1 rounded border border-neutral-700 backdrop-blur">
+          <div className="w-2.5 h-2.5 rounded bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.8)] animate-pulse" />
+          <span className="font-mono">TARGET BEACON</span>
+        </div>
+      </div>
+
+      {/* Camera Hint */}
+      <div className="absolute top-4 left-4 text-[11px] font-mono text-neutral-400 bg-neutral-900/85 px-3 py-1.5 rounded border border-neutral-700 backdrop-blur shadow-lg flex items-center gap-2">
+        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+        <span>Click floor to deploy • Drag to rotate • Scroll to zoom</span>
+      </div>
+    </div>
+  );
+});
 
 /* =========================================================================
    DASHBOARD PANEL (Edge-AI UI, P2P Terminal, & Sabotage Controls)
@@ -1010,71 +1100,14 @@ export default function App() {
 
   return (
     <div className="h-screen w-screen overflow-hidden bg-neutral-950 text-amber-50 flex">
-      <div className="w-3/4 h-full relative">
-        <Canvas
-          camera={{ position: [0, 24, 28], fov: 48 }}
-          shadows
-          style={{ touchAction: 'none' }}
-        >
-          <color attach="background" args={['#030712']} />
-          <Scene 
-            robotIds={robotIds} 
-            robotsRef={robotsRef} 
-            obstacles={obstacles} 
-            chargingStations={chargingStations}
-            targetBeacons={targetBeacons}
-            onFloorClick={handleFloorClick} 
-          />
-          <EffectComposer disableNormalPass>
-            <Bloom luminanceThreshold={0.9} mipmapBlur intensity={1.6} />
-          </EffectComposer>
-          <OrbitControls 
-            makeDefault 
-            target={[0, 0, 0]}
-            enablePan={true}
-            enableZoom={true}
-            enableRotate={true}
-            minPolarAngle={0}
-            maxPolarAngle={Math.PI / 2 - 0.05}
-            minZoom={5}
-            maxZoom={60}
-          />
-        </Canvas>
-        
-        {/* Grid Legend Overlay */}
-        <div className="absolute bottom-4 left-4 right-4 flex flex-wrap justify-center gap-3 text-[11px] text-neutral-300 pointer-events-none">
-          <div className="flex items-center gap-1.5 bg-neutral-900/90 px-2.5 py-1 rounded border border-neutral-700 backdrop-blur">
-            <div className="w-2.5 h-2.5 rounded bg-cyan-400 shadow-[0_0_8px_rgba(6,182,212,0.8)]" />
-            <span className="font-mono">CHARGING DOCK</span>
-          </div>
-          <div className="flex items-center gap-1.5 bg-neutral-900/90 px-2.5 py-1 rounded border border-neutral-700 backdrop-blur">
-            <div className="w-2.5 h-2.5 rounded bg-slate-600 border border-slate-400" />
-            <span className="font-mono">3D RACK (OBSTACLE)</span>
-          </div>
-          <div className="flex items-center gap-1.5 bg-neutral-900/90 px-2.5 py-1 rounded border border-neutral-700 backdrop-blur">
-            <div className="w-2.5 h-2.5 rounded bg-cyan-400 shadow-[0_0_6px_rgba(6,182,212,0.9)]" />
-            <span className="font-mono">BIDDING</span>
-          </div>
-          <div className="flex items-center gap-1.5 bg-neutral-900/90 px-2.5 py-1 rounded border border-neutral-700 backdrop-blur">
-            <div className="w-2.5 h-2.5 rounded bg-yellow-400 shadow-[0_0_6px_rgba(234,179,8,0.9)]" />
-            <span className="font-mono">CLAIMED</span>
-          </div>
-          <div className="flex items-center gap-1.5 bg-neutral-900/90 px-2.5 py-1 rounded border border-neutral-700 backdrop-blur">
-            <div className="w-2.5 h-2.5 rounded bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.9)] animate-pulse" />
-            <span className="font-mono">DEAD (HAZARD)</span>
-          </div>
-          <div className="flex items-center gap-1.5 bg-neutral-900/90 px-2.5 py-1 rounded border border-neutral-700 backdrop-blur">
-            <div className="w-2.5 h-2.5 rounded bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.8)] animate-pulse" />
-            <span className="font-mono">TARGET BEACON</span>
-          </div>
-        </div>
-
-        {/* Camera Hint */}
-        <div className="absolute top-4 left-4 text-[11px] font-mono text-neutral-400 bg-neutral-900/85 px-3 py-1.5 rounded border border-neutral-700 backdrop-blur shadow-lg flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-          <span>Click floor to deploy • Drag to rotate • Scroll to zoom</span>
-        </div>
-      </div>
+      <SimulationCanvas 
+        robotIds={robotIds} 
+        robotsRef={robotsRef} 
+        obstacles={obstacles} 
+        chargingStations={chargingStations} 
+        targetBeacons={targetBeacons} 
+        onFloorClick={handleFloorClick} 
+      />
 
       <DashboardPanel
         robotIds={robotIds}
