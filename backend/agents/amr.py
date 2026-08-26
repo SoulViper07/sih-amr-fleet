@@ -23,7 +23,7 @@ class AMRAgent:
         self,
         agent_id: str,
         start_pos: tuple[int, int],
-        grid_size: tuple[int, int] = (20, 20),
+        grid_size: tuple[int, int] = (30, 30),
         obstacles: set[tuple[int, int]] | None = None,
         priority: int = 1,
     ) -> None:
@@ -32,7 +32,7 @@ class AMRAgent:
         Args:
             agent_id: Unique identifier for this agent.
             start_pos: Starting (x, y) coordinate.
-            grid_size: Tuple (width, height) of the warehouse grid.
+            grid_size: Tuple (width, height) of the warehouse grid. Default (30, 30).
             obstacles: Set of (x, y) coordinates representing permanent obstacles.
             priority: Priority level (higher number = higher priority). Default 1.
         """
@@ -40,6 +40,7 @@ class AMRAgent:
         self.current_pos = start_pos
         self.current_path: list[State] = []
         self.dynamic_reservations: dict[int, set[tuple[int, int]]] = {}
+        self.peer_positions: dict[str, dict] = {}
         self.local_time = 0
         self.grid_size = grid_size
         self.obstacles = obstacles if obstacles is not None else set()
@@ -74,34 +75,25 @@ class AMRAgent:
         try:
             self.client.connect(broker, port, keepalive=60)
             self.client.loop_start()
-            # logger.info(f"Agent {self.agent_id} connected to {broker}:{port}")
-        except Exception as e:
-            # logger.error(f"Agent {self.agent_id} failed to connect: {e}")
+        except Exception:
             raise
 
     def disconnect(self) -> None:
         """Disconnect from MQTT broker and stop network loop."""
         self.client.loop_stop()
         self.client.disconnect()
-        # logger.info(f"Agent {self.agent_id} disconnected")
 
     def _on_connect(self, client: mqtt.Client, userdata: object, flags: dict, rc: int) -> None:
         """Callback for when the client connects to the broker."""
         if rc == 0:
-            # logger.info(f"Agent {self.agent_id} connected successfully")
-            # Subscribe to fleet topics
             client.subscribe("fleet/intents", qos=1)
             client.subscribe("fleet/clock", qos=1)
             client.subscribe("fleet/bids", qos=1)
-            # Subscribe to dispatch commands for this agent
+            client.subscribe("fleet/telemetry", qos=1)
             client.subscribe(f"fleet/dispatch/{self.agent_id}", qos=1)
-        else:
-            # logger.error(f"Agent {self.agent_id} connection failed with code {rc}")
-            pass
 
     def _on_disconnect(self, client: mqtt.Client, userdata: object, rc: int) -> None:
         """Callback for when the client disconnects from the broker."""
-        # logger.warning(f"Agent {self.agent_id} disconnected with code {rc}")
         pass
 
     def _on_message(self, client: mqtt.Client, userdata: object, msg: mqtt.MQTTMessage) -> None:
@@ -115,18 +107,41 @@ class AMRAgent:
         topic = msg.topic
         try:
             payload = json.loads(msg.payload.decode())
-        except json.JSONDecodeError as e:
-            # logger.error(f"Agent {self.agent_id} failed to parse message: {e}")
+        except json.JSONDecodeError:
             return
 
         if topic == "fleet/intents":
             self._handle_intent(payload)
+        elif topic == "fleet/telemetry":
+            self._handle_telemetry(payload)
         elif topic == "fleet/clock":
             self._handle_clock(payload)
         elif topic == "fleet/bids":
             self._handle_bid(payload)
         elif topic.startswith("fleet/dispatch/"):
             self._handle_dispatch(payload)
+
+    def _handle_telemetry(self, payload: dict) -> None:
+        """Track live position and intent of peer robots."""
+        sender_id = payload.get("agent_id")
+        if not sender_id or sender_id == self.agent_id:
+            return
+        x = payload.get("x")
+        y = payload.get("y")
+        if x is None or y is None:
+            return
+
+        inp = payload.get("intended_next_pos")
+        intended_next_pos = None
+        if isinstance(inp, (list, tuple)) and len(inp) >= 2:
+            intended_next_pos = (inp[0], inp[1])
+
+        self.peer_positions[sender_id] = {
+            "pos": (x, y),
+            "intended_next_pos": intended_next_pos,
+            "priority": payload.get("priority", 1),
+            "status": payload.get("status", "ACTIVE"),
+        }
 
     def _handle_intent(self, payload: dict) -> None:
         """Process peer robot's path intent and update dynamic reservations.
@@ -142,23 +157,42 @@ class AMRAgent:
         if sender_id == self.agent_id:
             return  # Ignore own broadcasts
 
+        # Track peer position and intended next position from path
+        if path and isinstance(path, list):
+            first_node = path[0]
+            if isinstance(first_node, (list, tuple)) and len(first_node) >= 2:
+                curr_pos = (first_node[0], first_node[1])
+                next_p = None
+                if len(path) > 1 and isinstance(path[1], (list, tuple)) and len(path[1]) >= 2:
+                    next_p = (path[1][0], path[1][1])
+                if sender_id in self.peer_positions:
+                    self.peer_positions[sender_id]["pos"] = curr_pos
+                    if next_p:
+                        self.peer_positions[sender_id]["intended_next_pos"] = next_p
+                    self.peer_positions[sender_id]["priority"] = sender_priority
+                    self.peer_positions[sender_id]["status"] = sender_status
+                else:
+                    self.peer_positions[sender_id] = {
+                        "pos": curr_pos,
+                        "intended_next_pos": next_p,
+                        "priority": sender_priority,
+                        "status": sender_status,
+                    }
+
         # If sender is DEAD, treat their position as a dynamic obstacle
         if sender_status == "DEAD":
-            # Get the latest position from the path
             if path:
                 last_node = path[-1]
-                if isinstance(last_node, list) and len(last_node) >= 2:
+                if isinstance(last_node, (list, tuple)) and len(last_node) >= 2:
                     dead_x, dead_y = last_node[0], last_node[1]
                     self.dynamic_obstacles.add((dead_x, dead_y))
-                    # logger.warning(f"Agent {self.agent_id}: Added dead agent {sender_id} at ({dead_x}, {dead_y}) as dynamic obstacle")
 
         if not isinstance(path, list):
-            # logger.warning(f"Agent {self.agent_id} received invalid path from {sender_id}")
             return
 
         peer_path: list[State] = []
         for node in path:
-            if not isinstance(node, list) or len(node) != 3:
+            if not isinstance(node, (list, tuple)) or len(node) != 3:
                 continue
             x, y, t = node
             peer_path.append((x, y, t))
@@ -168,8 +202,6 @@ class AMRAgent:
 
         # Check for conflicts with our current path
         if self._check_conflict(peer_path):
-            # Strict priority enforcement: ONLY lower priority yields
-            # If priorities equal, use agent_id as tiebreaker (lower id = higher priority)
             should_yield = False
             if self.priority < sender_priority:
                 should_yield = True
@@ -178,31 +210,18 @@ class AMRAgent:
 
             if should_yield:
                 current_time = time.time()
-                # Only yield if not in cooldown
                 if current_time >= self.yield_cooldown:
-                    self.yield_cooldown = current_time + 3.0  # 3 second cooldown
+                    self.yield_cooldown = current_time + 3.0
                     self.status = "YIELDING"
                     
-                    # Add higher-priority robot's current position as dynamic obstacle
-                    # so A* routes around it
                     if path:
                         first_node = path[0]
-                        if isinstance(first_node, list) and len(first_node) >= 2:
+                        if isinstance(first_node, (list, tuple)) and len(first_node) >= 2:
                             other_x, other_y = first_node[0], first_node[1]
                             self.dynamic_obstacles.add((other_x, other_y))
                     
-                    # logger.warning(
-                    #     f"Agent {self.agent_id} (pri={self.priority}): Conflict with {sender_id} "
-                    #     f"(pri={sender_priority}). YIELDING for 3s. Added ({other_x}, {other_y}) as obstacle."
-                    # )
-                    
                     if self.current_goal:
                         self.plan_to_goal(*self.current_goal)
-            else:
-                # Higher priority robot ignores conflict and continues
-                # logger.debug(f"Agent {self.agent_id} (pri={self.priority}): Conflict with {sender_id} "
-                #             f"(pri={sender_priority}). HIGHER PRIORITY - ignoring.")
-                pass
 
     def _handle_bid(self, payload: dict) -> None:
         """Process peer robot's bid for a task.
@@ -226,9 +245,6 @@ class AMRAgent:
             
             # Lower bid cost wins (lower is better)
             if sender_bid_cost < self.bid_cost or (sender_bid_cost == self.bid_cost and sender_priority > self.priority):
-                # We lost the bid - reset our bidding state
-                # logger.info(f"Agent {self.agent_id}: Lost bid for task ({task['x']}, {task['y']}) to {sender_id} "
-                #            f"(our cost: {self.bid_cost:.1f}, their cost: {sender_bid_cost:.1f})")
                 self.pending_task = None
                 self.bid_cost = None
                 self.bid_broadcast_time = None
@@ -245,13 +261,11 @@ class AMRAgent:
         if not self.current_path:
             return False
 
-        # Build a set of our future positions for fast lookup
         our_future: dict[int, tuple[int, int]] = {}
         for x, y, t in self.current_path:
             if t >= self.local_time:
                 our_future[t] = (x, y)
 
-        # Check peer path against our future positions
         for x, y, t in peer_path:
             if t >= self.local_time and t in our_future:
                 if our_future[t] == (x, y):
@@ -290,12 +304,11 @@ class AMRAgent:
                     if not task.get("claimed", False):
                         # Calculate bid cost: Manhattan distance + battery penalty
                         distance = abs(self.current_pos[0] - task["x"]) + abs(self.current_pos[1] - task["y"])
-                        battery_penalty = (100 - self.battery) * 0.1  # Higher penalty for lower battery
+                        battery_penalty = (100 - self.battery) * 0.1
                         self.bid_cost = distance + battery_penalty
                         self.pending_task = task
                         self.bid_broadcast_time = self.local_time
                         
-                        # Broadcast bid to peers
                         bid_payload = {
                             "sender_id": self.agent_id,
                             "task": task,
@@ -303,87 +316,114 @@ class AMRAgent:
                             "priority": self.priority,
                         }
                         self.client.publish("fleet/bids", json.dumps(bid_payload), qos=1)
-                        # logger.info(f"Agent {self.agent_id}: Bid {self.bid_cost:.1f} for task ({task['x']}, {task['y']})")
                         break  # Only bid on one task at a time
-            except Exception as e:
-                # logger.debug(f"Agent {self.agent_id}: Failed to poll tasks: {e}")
+            except Exception:
                 pass
 
         # Check if we won the bid (wait 1 tick after broadcasting)
         if (self.status == "DOCKED" and self.pending_task and self.bid_broadcast_time is not None 
             and self.local_time > self.bid_broadcast_time):
-            # We won! Claim the task and start moving
             self.status = "MOVING"
             task = self.pending_task
             self.current_goal = (task["x"], task["y"])
             self.goal = (task["x"], task["y"])
             
-            # Mark task as claimed (we can't actually modify the server list, but we track locally)
-            # Plan path to task
             self.plan_to_goal(task["x"], task["y"])
             
             self.pending_task = None
             self.bid_cost = None
             self.bid_broadcast_time = None
 
-        # Track previous position to detect movement
         prev_pos = self.current_pos
 
-        # If DEAD, stop moving completely but continue broadcasting
+        # Strict Anti-Ghosting & Anti-Collision Engine
+        next_pos = None
+        for x, y, t in self.current_path:
+            if t == self.local_time + 1:  # Next tick target coordinate
+                next_pos = (x, y)
+                break
+        self.intended_next_pos = next_pos
+
         if self.status == "DEAD":
             # Don't advance along path - stay frozen
             pass
-        else:
-            # Space-Time Collision Prevention: Check intended next position
-            next_pos = None
-            for x, y, t in self.current_path:
-                if t == self.local_time + 1:  # Next tick
-                    next_pos = (x, y)
-                    break
-            self.intended_next_pos = next_pos
+        elif self.status == "MOVING" and next_pos:
+            conflict_detected = False
+            replan_needed = False
 
-            # Check if another agent intends to occupy the same position next tick
-            if next_pos and self.status == "MOVING":
-                conflict_detected = False
-                for x, y, t in self.current_path:
-                    if t == self.local_time + 1:
-                        # Check dynamic reservations for next tick
-                        if t in self.dynamic_reservations and next_pos in self.dynamic_reservations[t]:
+            def lower_priority_than(peer_id: str, peer_pri: int) -> bool:
+                if self.priority < peer_pri:
+                    return True
+                if self.priority == peer_pri and self.agent_id > peer_id:
+                    return True
+                return False
+
+            # 1. Occupied Tile Lock: If next_pos contains another robot
+            for peer_id, peer in self.peer_positions.items():
+                p_pos = peer.get("pos")
+                p_status = peer.get("status", "ACTIVE")
+                if p_pos == next_pos:
+                    if p_status in ["DEAD", "YIELDING", "DOCKED", "IDLE"]:
+                        conflict_detected = True
+                        replan_needed = True
+                        self.dynamic_obstacles.add(next_pos)
+                        break
+
+            # 2. Swap Collision Prevention (Edge Collision):
+            # If Self is at pos A moving to pos B, and Peer is at pos B moving to pos A
+            if not conflict_detected:
+                for peer_id, peer in self.peer_positions.items():
+                    p_pos = peer.get("pos")
+                    p_next = peer.get("intended_next_pos")
+                    p_pri = peer.get("priority", 1)
+                    if p_pos == next_pos and p_next == self.current_pos:
+                        if lower_priority_than(peer_id, p_pri):
+                            conflict_detected = True
+                            replan_needed = True
+                            self.dynamic_obstacles.add(next_pos)
+                            break
+
+            # 3. Vertex Collision Prevention:
+            # If Self and Peer both intend to move into next_pos at tick t+1
+            if not conflict_detected:
+                for peer_id, peer in self.peer_positions.items():
+                    p_next = peer.get("intended_next_pos")
+                    p_pri = peer.get("priority", 1)
+                    if p_next == next_pos:
+                        if lower_priority_than(peer_id, p_pri):
                             conflict_detected = True
                             break
-                
-                if conflict_detected:
-                    # Lower priority waits 1 tick
-                    should_wait = False
-                    # Find the conflicting agent's priority from reservations
-                    # For simplicity, if we have lower priority, we wait
-                    # This is a simplified check - in reality we'd track which agent reserved the spot
-                    if self.priority < 5:  # Not highest priority
-                        should_wait = True
-                    
-                    if should_wait:
-                        self.status = "YIELDING"
-                        self.yield_cooldown = current_time + 1.5  # Wait 1.5 seconds (3 ticks)
-                        # logger.warning(f"Agent {self.agent_id}: Space-time conflict at {next_pos}, yielding for 1 tick")
-                        # Don't advance this tick
-                    else:
-                        # Advance along path if current time matches a path node
-                        for x, y, t in self.current_path:
-                            if t == self.local_time:
-                                self.current_pos = (x, y)
-                                break
-                else:
-                    # No conflict, advance normally
-                    for x, y, t in self.current_path:
-                        if t == self.local_time:
-                            self.current_pos = (x, y)
-                            break
+
+            # 4. Dynamic Time-Space Reservations Check
+            if not conflict_detected:
+                t_next = self.local_time + 1
+                if t_next in self.dynamic_reservations and next_pos in self.dynamic_reservations[t_next]:
+                    if self.priority < 5:
+                        conflict_detected = True
+
+            if conflict_detected:
+                self.status = "YIELDING"
+                self.yield_cooldown = current_time + 1.5
+                if replan_needed and self.current_goal:
+                    self.plan_to_goal(*self.current_goal)
+                # Halt at current position this tick
             else:
-                # No path or not moving, advance normally if there's a path node for current time
                 for x, y, t in self.current_path:
                     if t == self.local_time:
                         self.current_pos = (x, y)
                         break
+        else:
+            for x, y, t in self.current_path:
+                if t == self.local_time:
+                    self.current_pos = (x, y)
+                    break
+
+        # Check goal reached -> Automatically switch to DOCKED and clear path
+        if self.status == "MOVING" and self.goal and self.current_pos == self.goal:
+            self.status = "DOCKED"
+            self.goal = None
+            self.current_goal = None
+            self.current_path = []
 
         # Update battery: moving costs 0.5, idle/yielding costs 0.1
         if self.current_pos != prev_pos:
@@ -413,10 +453,11 @@ class AMRAgent:
         x = payload.get("x")
         y = payload.get("y")
         if x is None or y is None:
-            # logger.warning(f"Agent {self.agent_id}: Invalid dispatch payload {payload}")
             return
 
-        # logger.info(f"Agent {self.agent_id}: Received dispatch command to ({x}, {y})")
+        if self.status != "DEAD":
+            self.status = "MOVING"
+
         self.plan_to_goal(x, y)
 
     def plan_to_goal(self, goal_x: int, goal_y: int) -> bool:
@@ -432,11 +473,14 @@ class AMRAgent:
         if self.status == "DEAD":
             return False
 
+        if self.status in ["DOCKED", "IDLE"]:
+            self.status = "MOVING"
+
         self.current_goal = (goal_x, goal_y)
         self.goal = (goal_x, goal_y)
         start_x, start_y = self.current_pos
 
-        # Combine static obstacles with dynamic obstacles (dead robots)
+        # Combine static obstacles with dynamic obstacles (dead robots, yielded spots)
         all_obstacles = self.obstacles | self.dynamic_obstacles
 
         # Plan path starting from current local time
@@ -451,12 +495,9 @@ class AMRAgent:
         )
 
         if path is None:
-            # logger.warning(f"Agent {self.agent_id}: No path found to ({goal_x}, {goal_y})")
             self.current_path = []
             return False
 
-        # Adjust path times to be absolute (starting from local_time)
-        # The planner returns path starting at t=0, so we shift by local_time
         adjusted_path = [(x, y, t + self.local_time) for x, y, t in path]
         self.current_path = adjusted_path
 
@@ -469,7 +510,6 @@ class AMRAgent:
             "status": self.status,
         }
         self.client.publish("fleet/intents", json.dumps(intent), qos=1, retain=False)
-        # logger.info(f"Agent {self.agent_id}: Path planned to ({goal_x}, {goal_y}), length={len(adjusted_path)}")
         return True
 
     def get_state(self) -> dict:

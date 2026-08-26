@@ -17,14 +17,15 @@ logger = logging.getLogger(__name__)
 
 # Warehouse Configuration
 WAREHOUSE_CONFIG = {
-    "grid_size": [20, 20],
+    "grid_size": [30, 30],
     "racks": {
-        "rack_1": [(x, y) for x in range(2, 5) for y in range(4, 16)],
-        "rack_2": [(x, y) for x in range(8, 11) for y in range(4, 16)],
-        "rack_3": [(x, y) for x in range(14, 17) for y in range(4, 16)],
+        "rack_1": [(x, y) for x in range(4, 6) for y in range(6, 25)],
+        "rack_2": [(x, y) for x in range(10, 12) for y in range(6, 25)],
+        "rack_3": [(x, y) for x in range(16, 18) for y in range(6, 25)],
+        "rack_4": [(x, y) for x in range(22, 24) for y in range(6, 25)],
     },
-    "charging_stations": [(0, 0), (6, 0), (12, 0), (19, 0)],
-    "workstations": [(0, 19), (9, 19), (19, 19)],
+    "charging_stations": [(2, 0), (7, 0), (12, 0), (17, 0), (22, 0), (27, 0)],
+    "workstations": [(2, 29), (14, 29), (27, 29)],
 }
 
 # Flatten all rack coordinates into obstacles
@@ -159,6 +160,7 @@ async def get_config() -> dict[str, Any]:
     return {
         "grid_size": WAREHOUSE_CONFIG["grid_size"],
         "obstacles": OBSTACLES,
+        "charging_stations": WAREHOUSE_CONFIG["charging_stations"],
         "warehouse": WAREHOUSE_CONFIG,
     }
 

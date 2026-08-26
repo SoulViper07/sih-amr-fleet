@@ -30,18 +30,19 @@ logger = logging.getLogger(__name__)
 
 BROKER = "localhost"
 PORT = 1883
-GRID_SIZE = (20, 20)
+GRID_SIZE = (30, 30)
 
 # Warehouse config matching backend
 WAREHOUSE_CONFIG = {
-    "grid_size": [20, 20],
+    "grid_size": [30, 30],
     "racks": {
-        "rack_1": [(x, y) for x in range(2, 5) for y in range(4, 16)],
-        "rack_2": [(x, y) for x in range(8, 11) for y in range(4, 16)],
-        "rack_3": [(x, y) for x in range(14, 17) for y in range(4, 16)],
+        "rack_1": [(x, y) for x in range(4, 6) for y in range(6, 25)],
+        "rack_2": [(x, y) for x in range(10, 12) for y in range(6, 25)],
+        "rack_3": [(x, y) for x in range(16, 18) for y in range(6, 25)],
+        "rack_4": [(x, y) for x in range(22, 24) for y in range(6, 25)],
     },
-    "charging_stations": [(0, 0), (6, 0), (12, 0), (19, 0)],
-    "workstations": [(0, 19), (9, 19), (19, 19)],
+    "charging_stations": [(2, 0), (7, 0), (12, 0), (17, 0), (22, 0), (27, 0)],
+    "workstations": [(2, 29), (14, 29), (27, 29)],
 }
 
 OBSTACLES = []
@@ -52,23 +53,25 @@ OBSTACLES_SET = set(OBSTACLES)
 
 # Valid spawn positions (charging stations + workstations)
 SPAWN_POSITIONS = [
-    (0, 0),   # charging
-    (6, 0),   # charging
-    (12, 0),  # charging
-    (19, 0),  # charging
-    (0, 19),  # workstation
-    (9, 19),  # workstation
-    (19, 19), # workstation
+    (2, 0),
+    (7, 0),
+    (12, 0),
+    (17, 0),
+    (22, 0),
+    (27, 0),
+    (2, 29),
+    (14, 29),
+    (27, 29),
 ]
 
 # Docked positions for 6 AMRs (strictly at y=0 charging bays)
 DOCKED_POSITIONS = [
-    (0, 0),
-    (4, 0),
-    (8, 0),
+    (2, 0),
+    (7, 0),
     (12, 0),
-    (16, 0),
-    (19, 0),
+    (17, 0),
+    (22, 0),
+    (27, 0),
 ]
 
 # All valid positions (not in obstacles)
