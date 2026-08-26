@@ -4,12 +4,13 @@ from pathlib import Path
 # Add project root directory to sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 #!/usr/bin/env python3
-"""Simulation runner for multi-robot warehouse path planning demo."""
+"""Simulation runner for multi-robot warehouse simulation demo."""
 
 import time
 import json
 import logging
 import threading
+import random
 from typing import TYPE_CHECKING
 
 import paho.mqtt.client as mqtt
@@ -30,7 +31,38 @@ logger = logging.getLogger(__name__)
 BROKER = "localhost"
 PORT = 1883
 GRID_SIZE = (20, 20)
-OBSTACLES = [(5, 5), (5, 6), (5, 7), (10, 10), (11, 10), (12, 10), (13, 10), (15, 15)]
+
+# Warehouse config matching backend
+WAREHOUSE_CONFIG = {
+    "grid_size": [20, 20],
+    "racks": {
+        "rack_1": [(x, y) for x in range(2, 5) for y in range(4, 16)],
+        "rack_2": [(x, y) for x in range(8, 11) for y in range(4, 16)],
+        "rack_3": [(x, y) for x in range(14, 17) for y in range(4, 16)],
+    },
+    "charging_stations": [(0, 0), (6, 0), (12, 0), (19, 0)],
+    "workstations": [(0, 19), (9, 19), (19, 19)],
+}
+
+OBSTACLES = []
+for rack_coords in WAREHOUSE_CONFIG["racks"].values():
+    OBSTACLES.extend(rack_coords)
+
+OBSTACLES_SET = set(OBSTACLES)
+
+# Valid spawn positions (charging stations + workstations)
+SPAWN_POSITIONS = [
+    (0, 0),   # charging
+    (6, 0),   # charging
+    (12, 0),  # charging
+    (19, 0),  # charging
+    (0, 19),  # workstation
+    (9, 19),  # workstation
+    (19, 19), # workstation
+]
+
+# All valid positions (not in obstacles)
+VALID_POSITIONS = [(x, y) for x in range(GRID_SIZE[0]) for y in range(GRID_SIZE[1]) if (x, y) not in OBSTACLES_SET]
 
 
 class Coordinator:
@@ -41,6 +73,8 @@ class Coordinator:
         self.client.on_message = self._on_message
         self.live_positions: dict[str, dict] = {}
         self._lock = threading.Lock()
+        self.agent_goals: dict[str, tuple[int, int] | None] = {}
+        self.agent_arrival_time: dict[str, int] = {}
 
     def connect(self) -> None:
         """Connect to MQTT broker and subscribe to telemetry."""
@@ -74,47 +108,38 @@ class Coordinator:
         with self._lock:
             return dict(self.live_positions)
 
+    def assign_random_goal(self, agent_id: str, current_pos: tuple[int, int]) -> tuple[int, int]:
+        """Assign a random valid goal position."""
+        # Filter out current position and obstacles
+        possible_goals = [pos for pos in VALID_POSITIONS if pos != current_pos]
+        if not possible_goals:
+            return current_pos
+        return random.choice(possible_goals)
+
 
 def main() -> None:
     logger.info("=" * 60)
-    logger.info("Starting Multi-Robot Warehouse Simulation (20x20, 4 AMRs)")
+    logger.info("Starting Multi-Robot Warehouse Simulation (20x20, 6 AMRs)")
     logger.info("=" * 60)
 
-    # Create grid (20x20 with static obstacles)
+    # Create grid
     grid = WarehouseGrid(width=GRID_SIZE[0], height=GRID_SIZE[1], obstacles=OBSTACLES)
-    logger.info(f"Grid created: {GRID_SIZE[0]}x{GRID_SIZE[1]} with {len(OBSTACLES)} obstacles")
+    logger.info(f"Grid created: {GRID_SIZE[0]}x{GRID_SIZE[1]} with {len(OBSTACLES)} obstacles (racks)")
 
-    # Create agents with different priorities
-    agent1 = AMRAgent(
-        agent_id="AMR-1",
-        start_pos=(0, 0),
-        grid_size=GRID_SIZE,
-        obstacles=set(OBSTACLES),
-        priority=4,
-    )
-    agent2 = AMRAgent(
-        agent_id="AMR-2",
-        start_pos=(19, 0),
-        grid_size=GRID_SIZE,
-        obstacles=set(OBSTACLES),
-        priority=3,
-    )
-    agent3 = AMRAgent(
-        agent_id="AMR-3",
-        start_pos=(0, 19),
-        grid_size=GRID_SIZE,
-        obstacles=set(OBSTACLES),
-        priority=2,
-    )
-    agent4 = AMRAgent(
-        agent_id="AMR-4",
-        start_pos=(19, 19),
-        grid_size=GRID_SIZE,
-        obstacles=set(OBSTACLES),
-        priority=1,
-    )
-
-    agents = [agent1, agent2, agent3, agent4]
+    # Create 6 agents starting at charging stations and workstations
+    agents = []
+    for i in range(6):
+        agent_id = f"AMR-{i+1}"
+        start_pos = SPAWN_POSITIONS[i % len(SPAWN_POSITIONS)]
+        priority = 6 - i  # Different priorities
+        agent = AMRAgent(
+            agent_id=agent_id,
+            start_pos=start_pos,
+            grid_size=GRID_SIZE,
+            obstacles=OBSTACLES_SET,
+            priority=priority,
+        )
+        agents.append(agent)
 
     # Connect agents
     logger.info("Connecting agents to broker...")
@@ -128,31 +153,60 @@ def main() -> None:
     # Wait for connections to establish
     time.sleep(1)
 
-    # Plan paths (cross the grid)
-    logger.info("Planning paths...")
-    agent1.plan_to_goal(19, 19)  # Bottom-left to top-right
-    agent2.plan_to_goal(0, 19)   # Bottom-right to top-left
-    agent3.plan_to_goal(19, 0)   # Top-left to bottom-right
-    agent4.plan_to_goal(0, 0)    # Top-right to bottom-left
+    # Initial random goals for all agents
+    logger.info("Assigning initial random goals...")
+    for agent in agents:
+        goal = coordinator.assign_random_goal(agent.agent_id, agent.current_pos)
+        agent.plan_to_goal(goal[0], goal[1])
+        coordinator.agent_goals[agent.agent_id] = goal
 
     # Wait for intents to propagate
     time.sleep(1)
 
-    logger.info("Starting simulation loop (t=0 to 30)")
-    logger.info("Watch for collision avoidance and priority-based yielding")
+    logger.info("Starting continuous simulation loop (t=0 to 300)")
+    logger.info("Agents will continuously pick new random targets")
     logger.info("-" * 60)
 
-    # Simulation loop (longer for 20x20 grid)
-    for t in range(31):
+    # Simulation loop (longer for continuous operation)
+    for t in range(301):
         coordinator.publish_clock(t)
         time.sleep(0.5)
 
         positions = coordinator.get_positions()
+        
+        # Check for agents that reached their goal and assign new ones
+        for agent in agents:
+            if agent.status == "DEAD":
+                continue
+                
+            pos_data = positions.get(agent.agent_id)
+            if not pos_data:
+                continue
+                
+            current_pos = (pos_data["x"], pos_data["y"])
+            goal = coordinator.agent_goals.get(agent.agent_id)
+            
+            if goal and current_pos == goal:
+                # Check if we've been at this goal for 2 seconds (4 ticks at 0.5s each)
+                arrival_time = coordinator.agent_arrival_time.get(agent.agent_id)
+                if arrival_time is None:
+                    coordinator.agent_arrival_time[agent.agent_id] = t
+                elif t - arrival_time >= 4:  # 2 seconds = 4 ticks
+                    # Assign new random goal
+                    new_goal = coordinator.assign_random_goal(agent.agent_id, current_pos)
+                    agent.plan_to_goal(new_goal[0], new_goal[1])
+                    coordinator.agent_goals[agent.agent_id] = new_goal
+                    coordinator.agent_arrival_time[agent.agent_id] = None
+                    logger.info(f"Agent {agent.agent_id}: Reached goal, new target ({new_goal[0]}, {new_goal[1]})")
+            elif goal and current_pos != goal:
+                # Reset arrival time if not at goal
+                coordinator.agent_arrival_time[agent.agent_id] = None
+
         pos_str = ", ".join(
-            f"{aid}: ({p['x']}, {p['y']}) bat={p.get('battery', 'N/A')} pri={p.get('priority', 'N/A')}"
+            f"{aid}: ({p['x']}, {p['y']}) bat={p.get('battery', 'N/A')} pri={p.get('priority', 'N/A')} st={p.get('status', 'ACTIVE')}"
             for aid, p in positions.items()
         )
-        logger.info(f"t={t:2d} | {pos_str}")
+        logger.info(f"t={t:3d} | {pos_str}")
 
     logger.info("-" * 60)
     logger.info("Simulation complete")

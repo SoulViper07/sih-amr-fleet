@@ -2,6 +2,7 @@
 
 import json
 import logging
+import requests
 from typing import TYPE_CHECKING
 
 import paho.mqtt.client as mqtt
@@ -41,10 +42,12 @@ class AMRAgent:
         self.local_time = 0
         self.grid_size = grid_size
         self.obstacles = obstacles if obstacles is not None else set()
+        self.dynamic_obstacles: set[tuple[int, int]] = set()
         self.priority = priority
         self.goal: tuple[int, int] | None = None
         self.current_goal: tuple[int, int] | None = None
         self.battery = 100.0
+        self.status = "ACTIVE"
 
         # MQTT client setup
         self.client = mqtt.Client(client_id=agent_id, clean_session=True)
@@ -120,9 +123,20 @@ class AMRAgent:
         sender_id = payload.get("sender_id")
         path = payload.get("path", [])
         sender_priority = payload.get("priority", 1)
+        sender_status = payload.get("status", "ACTIVE")
 
         if sender_id == self.agent_id:
             return  # Ignore own broadcasts
+
+        # If sender is DEAD, treat their position as a dynamic obstacle
+        if sender_status == "DEAD":
+            # Get the latest position from the path
+            if path:
+                last_node = path[-1]
+                if isinstance(last_node, list) and len(last_node) >= 2:
+                    dead_x, dead_y = last_node[0], last_node[1]
+                    self.dynamic_obstacles.add((dead_x, dead_y))
+                    logger.warning(f"Agent {self.agent_id}: Added dead agent {sender_id} at ({dead_x}, {dead_y}) as dynamic obstacle")
 
         if not isinstance(path, list):
             logger.warning(f"Agent {self.agent_id} received invalid path from {sender_id}")
@@ -182,14 +196,27 @@ class AMRAgent:
         """
         self.local_time = payload.get("time", self.local_time)
 
+        # Check sabotage status
+        try:
+            res = requests.get("http://localhost:8000/api/sabotage/status", timeout=0.5)
+            if self.agent_id in res.json().get("sabotaged", []):
+                self.status = "DEAD"
+        except Exception:
+            pass
+
         # Track previous position to detect movement
         prev_pos = self.current_pos
 
-        # Advance along path if current time matches a path node
-        for x, y, t in self.current_path:
-            if t == self.local_time:
-                self.current_pos = (x, y)
-                break
+        # If DEAD, stop moving completely but continue broadcasting
+        if self.status == "DEAD":
+            # Don't advance along path - stay frozen
+            pass
+        else:
+            # Advance along path if current time matches a path node
+            for x, y, t in self.current_path:
+                if t == self.local_time:
+                    self.current_pos = (x, y)
+                    break
 
         # Update battery: moving costs 0.5, idle/yielding costs 0.1
         if self.current_pos != prev_pos:
@@ -197,7 +224,7 @@ class AMRAgent:
         else:
             self.battery = max(0.0, self.battery - 0.1)
 
-        # Publish telemetry
+        # Publish telemetry with status
         telemetry = {
             "agent_id": self.agent_id,
             "x": self.current_pos[0],
@@ -205,6 +232,7 @@ class AMRAgent:
             "time": self.local_time,
             "battery": round(self.battery, 1),
             "priority": self.priority,
+            "status": self.status,
         }
         self.client.publish("fleet/telemetry", json.dumps(telemetry), qos=1)
 
@@ -233,9 +261,15 @@ class AMRAgent:
         Returns:
             True if path found, False otherwise.
         """
+        if self.status == "DEAD":
+            return False
+
         self.current_goal = (goal_x, goal_y)
         self.goal = (goal_x, goal_y)
         start_x, start_y = self.current_pos
+
+        # Combine static obstacles with dynamic obstacles (dead robots)
+        all_obstacles = self.obstacles | self.dynamic_obstacles
 
         # Plan path starting from current local time
         path = time_space_astar(
@@ -243,7 +277,7 @@ class AMRAgent:
             goal=(goal_x, goal_y),
             grid_width=self.grid_size[0],
             grid_height=self.grid_size[1],
-            static_obstacles=self.obstacles,
+            static_obstacles=all_obstacles,
             dynamic_reservations=self.dynamic_reservations,
             max_time=self.local_time + 100,  # Reasonable horizon
         )
@@ -264,6 +298,7 @@ class AMRAgent:
             "path": adjusted_path,
             "timestamp": self.local_time,
             "priority": self.priority,
+            "status": self.status,
         }
         self.client.publish("fleet/intents", json.dumps(intent), qos=1, retain=False)
         logger.info(f"Agent {self.agent_id}: Path planned to ({goal_x}, {goal_y}), length={len(adjusted_path)}")
@@ -284,4 +319,5 @@ class AMRAgent:
             "reservations_count": sum(len(s) for s in self.dynamic_reservations.values()),
             "priority": self.priority,
             "battery": round(self.battery, 1),
+            "status": self.status,
         }

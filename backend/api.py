@@ -3,9 +3,11 @@
 import asyncio
 import json
 import logging
+import random
 from typing import Any
 
 import paho.mqtt.client as mqtt
+import requests
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -13,9 +15,25 @@ from pydantic import BaseModel
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Global configuration
-GRID_SIZE = [20, 20]
-OBSTACLES = [[5, 5], [5, 6], [5, 7], [10, 10], [11, 10], [12, 10], [13, 10], [15, 15]]
+# Warehouse Configuration
+WAREHOUSE_CONFIG = {
+    "grid_size": [20, 20],
+    "racks": {
+        "rack_1": [(x, y) for x in range(2, 5) for y in range(4, 16)],
+        "rack_2": [(x, y) for x in range(8, 11) for y in range(4, 16)],
+        "rack_3": [(x, y) for x in range(14, 17) for y in range(4, 16)],
+    },
+    "charging_stations": [(0, 0), (6, 0), (12, 0), (19, 0)],
+    "workstations": [(0, 19), (9, 19), (19, 19)],
+}
+
+# Flatten all rack coordinates into obstacles
+OBSTACLES = []
+for rack_coords in WAREHOUSE_CONFIG["racks"].values():
+    OBSTACLES.extend(rack_coords)
+
+# Sabotage system
+SABOTAGED_AGENTS = []
 
 app = FastAPI(title="AMR Fleet API", version="1.0.0")
 
@@ -135,7 +153,26 @@ async def health_check() -> dict[str, str]:
 @app.get("/api/config")
 async def get_config() -> dict[str, Any]:
     """Return grid configuration."""
-    return {"grid_size": GRID_SIZE, "obstacles": OBSTACLES}
+    return {
+        "grid_size": WAREHOUSE_CONFIG["grid_size"],
+        "obstacles": OBSTACLES,
+        "warehouse": WAREHOUSE_CONFIG,
+    }
+
+
+@app.get("/api/sabotage/status")
+async def get_sabotage_status() -> dict[str, Any]:
+    """Return list of sabotaged agents."""
+    return {"sabotaged": SABOTAGED_AGENTS}
+
+
+@app.post("/api/sabotage/{agent_id}")
+async def sabotage_agent(agent_id: str) -> dict[str, Any]:
+    """Sabotage an agent (mark as dead)."""
+    if agent_id not in SABOTAGED_AGENTS:
+        SABOTAGED_AGENTS.append(agent_id)
+        logger.info(f"Agent {agent_id} sabotaged!")
+    return {"status": "success", "sabotaged": agent_id, "all_sabotaged": SABOTAGED_AGENTS}
 
 
 class DispatchRequest(BaseModel):
