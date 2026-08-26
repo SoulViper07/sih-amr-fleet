@@ -13,7 +13,8 @@ import {
   Zap, 
   Target, 
   Terminal, 
-  Radio
+  Radio,
+  Skull
 } from 'lucide-react';
 
 const WS_URL = 'ws://localhost:8000/ws';
@@ -208,7 +209,7 @@ const TargetBeacon = React.memo(({ x, y }) => {
 });
 
 /* =========================================================================
-   AMR MESH COMPONENT (Colorized by Telemetry / Auction Status)
+   AMR MESH COMPONENT (Colorized by Telemetry / Auction Status & Hazard Light)
    ========================================================================= */
 const AmrMesh = React.memo(({ id, targetPosition, battery, status }) => {
   const meshRef = useRef();
@@ -246,12 +247,12 @@ const AmrMesh = React.memo(({ id, targetPosition, battery, status }) => {
   let displayStatus = rawStatus === "IDLE" ? "DOCKED" : rawStatus;
 
   if (isDead) {
-    meshColor = "#3f3f46";
-    emissiveColor = "#3f3f46";
-    emissiveIntensity = 0.2;
-    borderColor = "#52525b";
-    textColor = "#71717a";
-    shadowGlow = "none";
+    meshColor = "#ef4444";
+    emissiveColor = "#ef4444";
+    emissiveIntensity = 3.5;
+    borderColor = "#ef4444";
+    textColor = "#fca5a5";
+    shadowGlow = "rgba(239, 68, 68, 1)";
   } else if (isBidding) {
     meshColor = "#0891b2";
     emissiveColor = "#06b6d4";
@@ -298,6 +299,16 @@ const AmrMesh = React.memo(({ id, targetPosition, battery, status }) => {
         />
       </Box>
 
+      {/* Red Hazard Point Light when DEAD directly above robot */}
+      {isDead && (
+        <pointLight
+          position={[0, 1, 0]}
+          intensity={5}
+          distance={4}
+          color="#ef4444"
+        />
+      )}
+
       {/* Top Tag */}
       <Html
         position={[0, 1.25, 0]}
@@ -311,7 +322,7 @@ const AmrMesh = React.memo(({ id, targetPosition, battery, status }) => {
           textShadow: shadowGlow === 'none' ? 'none' : `0 0 10px ${shadowGlow}`,
         }}
       >
-        <div style={{ background: 'rgba(0,0,0,0.85)', padding: '2px 6px', borderRadius: '4px', border: `1px solid ${borderColor}`, display: 'inline-block' }}>
+        <div style={{ background: isDead ? 'rgba(40,0,0,0.9)' : 'rgba(0,0,0,0.85)', padding: '2px 6px', borderRadius: '4px', border: `1px solid ${borderColor}`, display: 'inline-block' }}>
           <div>{id} <span style={{ fontSize: '9px', opacity: 0.9 }}>[{displayStatus}]</span></div>
           <div style={{ fontSize: '10px', opacity: 0.85 }}>{battery}%</div>
         </div>
@@ -323,7 +334,7 @@ const AmrMesh = React.memo(({ id, targetPosition, battery, status }) => {
         position={[0, 0.01, 0]}
         castShadow
       >
-        <meshBasicMaterial color={emissiveColor} transparent opacity={isDead ? 0.15 : 0.4} />
+        <meshBasicMaterial color={emissiveColor} transparent opacity={isDead ? 0.6 : 0.4} />
       </Box>
     </group>
   );
@@ -424,7 +435,7 @@ const Scene = ({ robots, obstacles, chargingStations, targetBeacons, onFloorClic
 };
 
 /* =========================================================================
-   DASHBOARD PANEL (Edge-AI UI & P2P Terminal)
+   DASHBOARD PANEL (Edge-AI UI, P2P Terminal, & Sabotage Controls)
    ========================================================================= */
 const DashboardPanel = ({ 
   robots, 
@@ -432,7 +443,8 @@ const DashboardPanel = ({
   isConnected, 
   selectedAgent, 
   setSelectedAgent, 
-  logs
+  logs,
+  onSabotage
 }) => {
   const getBatteryColor = (level) => {
     if (level > 50) return 'bg-emerald-500';
@@ -608,27 +620,48 @@ const DashboardPanel = ({
         </div>
       </div>
 
-      {/* Live Telemetry */}
+      {/* Live Telemetry with Red Sabotage/Kill Trigger */}
       <div className="mb-3 bg-neutral-800/50 rounded-lg border border-yellow-700/20 p-2.5 flex-shrink-0">
         <div className="flex items-center justify-between mb-1.5">
           <div className="flex items-center gap-1.5">
             <Cpu className="w-3.5 h-3.5 text-yellow-500" />
             <h3 className="font-semibold text-yellow-300 text-xs">SWARM TELEMETRY</h3>
           </div>
-          <span className="text-[9px] text-yellow-600">P2P NODES</span>
+          <span className="text-[9px] text-yellow-600">SABOTAGE CONTROLS</span>
         </div>
-        <div className="space-y-1.5 max-h-[140px] overflow-y-auto custom-scrollbar pr-1">
+        <div className="space-y-1.5 max-h-[150px] overflow-y-auto custom-scrollbar pr-1">
           {robotIds.map((id) => {
             const pos = robots[id];
             const displayStatus = (pos.status === "IDLE" || !pos.status) ? "DOCKED" : pos.status;
+            const isDead = pos.status === "DEAD";
+
             return (
-              <div key={id} className="bg-neutral-900 rounded border border-neutral-700/80 p-2">
+              <div key={id} className={`bg-neutral-900 rounded border p-2 transition-all ${isDead ? 'border-red-800/60 bg-red-950/20' : 'border-neutral-700/80'}`}>
                 <div className="flex items-center justify-between mb-1">
                   <div className="flex items-center gap-1.5">
-                    <span className="font-bold text-yellow-400 text-xs">{id}</span>
+                    <span className={`font-bold text-xs ${isDead ? 'text-red-400 line-through' : 'text-yellow-400'}`}>{id}</span>
                     <span className="text-[9px] text-neutral-400">({pos.x}, {pos.y})</span>
                   </div>
-                  {getStatusBadge(displayStatus)}
+                  <div className="flex items-center gap-1.5">
+                    {getStatusBadge(displayStatus)}
+                    {/* Small High-Contrast Red Sabotage / Kill Button */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSabotage(id);
+                      }}
+                      disabled={isDead}
+                      title={`Sabotage / Kill ${id}`}
+                      className={`px-1.5 py-0.5 rounded text-[8px] font-mono font-bold flex items-center gap-1 transition-all ${
+                        isDead
+                          ? 'bg-neutral-800 text-neutral-600 border border-neutral-700 cursor-not-allowed opacity-50'
+                          : 'bg-red-600 hover:bg-red-500 text-white border border-red-400 shadow-[0_0_8px_rgba(239,68,68,0.7)] active:scale-95 cursor-pointer'
+                      }`}
+                    >
+                      <Skull className="w-2.5 h-2.5" />
+                      <span>KILL</span>
+                    </button>
+                  </div>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <div className="flex-shrink-0">{getBatteryIcon(pos.battery)}</div>
@@ -696,7 +729,7 @@ const DashboardPanel = ({
                     tagStyle = 'bg-amber-500/20 text-amber-300 border-amber-500/50';
                     tagText = 'YIELD';
                   } else if (isDead) {
-                    containerStyle = 'bg-red-950/50 border-red-600/60 text-red-200';
+                    containerStyle = 'bg-red-950/50 border-red-600/60 text-red-200 shadow-[0_0_10px_rgba(239,68,68,0.2)]';
                     tagStyle = 'bg-red-500/20 text-red-300 border-red-500/50';
                     tagText = 'FAILURE';
                   } else if (isDispatch) {
@@ -728,6 +761,7 @@ const DashboardPanel = ({
                 // Fallback string logs
                 const isBidString = String(log).includes('BID') || String(log).includes('BIDDING');
                 const isClaimString = String(log).includes('CLAIM') || String(log).includes('CLAIMED');
+                const isDeadString = String(log).includes('DEAD') || String(log).includes('FAILURE') || String(log).includes('SABOTAGE');
                 
                 return (
                   <motion.div
@@ -736,6 +770,7 @@ const DashboardPanel = ({
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.2 }}
                     className={`p-1 rounded font-mono text-[9.5px] ${
+                      isDeadString ? 'text-red-300 bg-red-950/30 border border-red-800/40' :
                       isBidString ? 'text-cyan-300 bg-cyan-950/30 border border-cyan-800/40' :
                       isClaimString ? 'text-yellow-300 bg-yellow-950/30 border border-yellow-800/40' :
                       'text-yellow-100/80'
@@ -794,6 +829,33 @@ export default function App() {
     }, 1000);
     return () => clearInterval(interval);
   }, []);
+
+  // Sabotage / Kill handler
+  const handleSabotage = async (agentId) => {
+    try {
+      await fetch(`http://localhost:8000/api/sabotage/${agentId}`, { method: 'POST' });
+      // Optimistically update robot status to DEAD
+      setRobots(prev => ({
+        ...prev,
+        [agentId]: {
+          ...prev[agentId],
+          status: 'DEAD'
+        }
+      }));
+      // Push sabotage event to logs
+      setLogs(prev => [{
+        id: `${time}-${agentId}-sabotage-${Date.now()}`,
+        time: time,
+        agentId: agentId,
+        status: "DEAD",
+        type: "FAILURE",
+        message: `[SABOTAGE] ⚠️ Manual override: ${agentId} neutralized -> Dynamic obstacle active on grid`,
+        color: "red"
+      }, ...prev].slice(0, 25));
+    } catch (err) {
+      console.error(`Failed to sabotage ${agentId}:`, err);
+    }
+  };
 
   // WebSocket for real-time telemetry & auction bridge
   useEffect(() => {
@@ -1015,6 +1077,10 @@ export default function App() {
             <span className="font-mono">CLAIMED</span>
           </div>
           <div className="flex items-center gap-1.5 bg-neutral-900/90 px-2.5 py-1 rounded border border-neutral-700 backdrop-blur">
+            <div className="w-2.5 h-2.5 rounded bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.9)] animate-pulse" />
+            <span className="font-mono">DEAD (HAZARD)</span>
+          </div>
+          <div className="flex items-center gap-1.5 bg-neutral-900/90 px-2.5 py-1 rounded border border-neutral-700 backdrop-blur">
             <div className="w-2.5 h-2.5 rounded bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.8)] animate-pulse" />
             <span className="font-mono">TARGET BEACON</span>
           </div>
@@ -1034,6 +1100,7 @@ export default function App() {
         selectedAgent={selectedAgent}
         setSelectedAgent={setSelectedAgent}
         logs={logs}
+        onSabotage={handleSabotage}
       />
     </div>
   );
