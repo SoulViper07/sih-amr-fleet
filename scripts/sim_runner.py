@@ -172,14 +172,6 @@ def main() -> None:
         coordinator.publish_clock(t)
         time.sleep(0.5)
 
-        positions = coordinator.get_positions()
-        
-        pos_str = ", ".join(
-            f"{aid}: ({p['x']}, {p['y']}) bat={p.get('battery', 'N/A')} pri={p.get('priority', 'N/A')} st={p.get('status', 'DOCKED')}"
-            for aid, p in positions.items()
-        )
-        logger.info(f"t={t:3d} | {pos_str}")
-
     logger.info("-" * 60)
     logger.info("Simulation complete")
 
