@@ -61,6 +61,16 @@ SPAWN_POSITIONS = [
     (19, 19), # workstation
 ]
 
+# Docked positions for 6 AMRs (strictly at y=0 charging bays)
+DOCKED_POSITIONS = [
+    (0, 0),
+    (4, 0),
+    (8, 0),
+    (12, 0),
+    (16, 0),
+    (19, 0),
+]
+
 # All valid positions (not in obstacles)
 VALID_POSITIONS = [(x, y) for x in range(GRID_SIZE[0]) for y in range(GRID_SIZE[1]) if (x, y) not in OBSTACLES_SET]
 
@@ -126,12 +136,12 @@ def main() -> None:
     grid = WarehouseGrid(width=GRID_SIZE[0], height=GRID_SIZE[1], obstacles=OBSTACLES)
     logger.info(f"Grid created: {GRID_SIZE[0]}x{GRID_SIZE[1]} with {len(OBSTACLES)} obstacles (racks)")
 
-    # Create 6 agents starting at charging stations and workstations
+    # Create 6 agents strictly at docked coordinates (y=0 charging bays)
     agents = []
     for i in range(6):
         agent_id = f"AMR-{i+1}"
-        start_pos = SPAWN_POSITIONS[i % len(SPAWN_POSITIONS)]
-        priority = 6 - i  # Different priorities
+        start_pos = DOCKED_POSITIONS[i]
+        priority = 6 - i  # Different priorities (AMR-1 highest)
         agent = AMRAgent(
             agent_id=agent_id,
             start_pos=start_pos,
@@ -153,18 +163,8 @@ def main() -> None:
     # Wait for connections to establish
     time.sleep(1)
 
-    # Initial random goals for all agents
-    logger.info("Assigning initial random goals...")
-    for agent in agents:
-        goal = coordinator.assign_random_goal(agent.agent_id, agent.current_pos)
-        agent.plan_to_goal(goal[0], goal[1])
-        coordinator.agent_goals[agent.agent_id] = goal
-
-    # Wait for intents to propagate
-    time.sleep(1)
-
     logger.info("Starting continuous simulation loop (t=0 to 300)")
-    logger.info("Agents will continuously pick new random targets")
+    logger.info("Agents will bid on tasks via Edge-AI Contract Net Protocol")
     logger.info("-" * 60)
 
     # Simulation loop (longer for continuous operation)
@@ -174,36 +174,8 @@ def main() -> None:
 
         positions = coordinator.get_positions()
         
-        # Check for agents that reached their goal and assign new ones
-        for agent in agents:
-            if agent.status == "DEAD":
-                continue
-                
-            pos_data = positions.get(agent.agent_id)
-            if not pos_data:
-                continue
-                
-            current_pos = (pos_data["x"], pos_data["y"])
-            goal = coordinator.agent_goals.get(agent.agent_id)
-            
-            if goal and current_pos == goal:
-                # Check if we've been at this goal for 2 seconds (4 ticks at 0.5s each)
-                arrival_time = coordinator.agent_arrival_time.get(agent.agent_id)
-                if arrival_time is None:
-                    coordinator.agent_arrival_time[agent.agent_id] = t
-                elif t - arrival_time >= 4:  # 2 seconds = 4 ticks
-                    # Assign new random goal
-                    new_goal = coordinator.assign_random_goal(agent.agent_id, current_pos)
-                    agent.plan_to_goal(new_goal[0], new_goal[1])
-                    coordinator.agent_goals[agent.agent_id] = new_goal
-                    coordinator.agent_arrival_time[agent.agent_id] = None
-                    logger.info(f"Agent {agent.agent_id}: Reached goal, new target ({new_goal[0]}, {new_goal[1]})")
-            elif goal and current_pos != goal:
-                # Reset arrival time if not at goal
-                coordinator.agent_arrival_time[agent.agent_id] = None
-
         pos_str = ", ".join(
-            f"{aid}: ({p['x']}, {p['y']}) bat={p.get('battery', 'N/A')} pri={p.get('priority', 'N/A')} st={p.get('status', 'ACTIVE')}"
+            f"{aid}: ({p['x']}, {p['y']}) bat={p.get('battery', 'N/A')} pri={p.get('priority', 'N/A')} st={p.get('status', 'DOCKED')}"
             for aid, p in positions.items()
         )
         logger.info(f"t={t:3d} | {pos_str}")

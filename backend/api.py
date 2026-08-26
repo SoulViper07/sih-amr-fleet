@@ -35,6 +35,9 @@ for rack_coords in WAREHOUSE_CONFIG["racks"].values():
 # Sabotage system
 SABOTAGED_AGENTS = []
 
+# Task system for Edge-AI bidding
+PENDING_TASKS = []
+
 app = FastAPI(title="AMR Fleet API", version="1.0.0")
 
 app.add_middleware(
@@ -173,6 +176,26 @@ async def sabotage_agent(agent_id: str) -> dict[str, Any]:
         SABOTAGED_AGENTS.append(agent_id)
         logger.info(f"Agent {agent_id} sabotaged!")
     return {"status": "success", "sabotaged": agent_id, "all_sabotaged": SABOTAGED_AGENTS}
+
+
+class TaskRequest(BaseModel):
+    x: int
+    y: int
+
+
+@app.post("/api/tasks")
+async def create_task(request: TaskRequest) -> dict[str, Any]:
+    """Create a new task for AMRs to bid on."""
+    task = {"x": request.x, "y": request.y, "claimed": False}
+    PENDING_TASKS.append(task)
+    logger.info(f"New task created at ({request.x}, {request.y})")
+    return {"status": "task_broadcasted", "task": task}
+
+
+@app.get("/api/tasks")
+async def get_tasks() -> dict[str, Any]:
+    """Return all pending tasks for AMRs to bid on."""
+    return {"tasks": PENDING_TASKS}
 
 
 class DispatchRequest(BaseModel):
