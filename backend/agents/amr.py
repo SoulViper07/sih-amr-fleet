@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 class AMRAgent:
-    """Autonomous Mobile Robot agent with decentralized path planning and collision avoidance."""
+    """Autonomous Mobile Robot agent with decentralized path planning, collision avoidance, and Edge-AI task bidding."""
 
     def __init__(
         self,
@@ -48,9 +48,15 @@ class AMRAgent:
         self.goal: tuple[int, int] | None = None
         self.current_goal: tuple[int, int] | None = None
         self.battery = 100.0
-        self.status = "ACTIVE"
+        self.status = "DOCKED"  # Start docked at charging bay
         self.last_sabotage_check = 0.0
         self.yield_cooldown = 0.0
+
+        # Edge-AI bidding state
+        self.bid_cost: float | None = None
+        self.pending_task: dict | None = None
+        self.bid_broadcast_time: int | None = None
+        self.intended_next_pos: tuple[int, int] | None = None
 
         # MQTT client setup
         self.client = mqtt.Client(client_id=agent_id, clean_session=True)
@@ -86,6 +92,7 @@ class AMRAgent:
             # Subscribe to fleet topics
             client.subscribe("fleet/intents", qos=1)
             client.subscribe("fleet/clock", qos=1)
+            client.subscribe("fleet/bids", qos=1)
             # Subscribe to dispatch commands for this agent
             client.subscribe(f"fleet/dispatch/{self.agent_id}", qos=1)
         else:
@@ -114,6 +121,8 @@ class AMRAgent:
             self._handle_intent(payload)
         elif topic == "fleet/clock":
             self._handle_clock(payload)
+        elif topic == "fleet/bids":
+            self._handle_bid(payload)
         elif topic.startswith("fleet/dispatch/"):
             self._handle_dispatch(payload)
 
@@ -192,6 +201,35 @@ class AMRAgent:
                 logger.debug(f"Agent {self.agent_id} (pri={self.priority}): Conflict with {sender_id} "
                             f"(pri={sender_priority}). HIGHER PRIORITY - ignoring.")
 
+    def _handle_bid(self, payload: dict) -> None:
+        """Process peer robot's bid for a task.
+
+        Args:
+            payload: JSON payload containing sender_id, task, bid_cost, and priority.
+        """
+        sender_id = payload.get("sender_id")
+        task = payload.get("task")
+        sender_bid_cost = payload.get("bid_cost")
+        sender_priority = payload.get("priority", 1)
+
+        if sender_id == self.agent_id:
+            return  # Ignore own bids
+
+        # If we're bidding on the same task, compare bid costs
+        if (self.pending_task and task and 
+            self.pending_task.get("x") == task.get("x") and 
+            self.pending_task.get("y") == task.get("y") and
+            self.bid_cost is not None and sender_bid_cost is not None):
+            
+            # Lower bid cost wins (lower is better)
+            if sender_bid_cost < self.bid_cost or (sender_bid_cost == self.bid_cost and sender_priority > self.priority):
+                # We lost the bid - reset our bidding state
+                logger.info(f"Agent {self.agent_id}: Lost bid for task ({task['x']}, {task['y']}) to {sender_id} "
+                           f"(our cost: {self.bid_cost:.1f}, their cost: {sender_bid_cost:.1f})")
+                self.pending_task = None
+                self.bid_cost = None
+                self.bid_broadcast_time = None
+
     def _check_conflict(self, peer_path: list[State]) -> bool:
         """Check for vertex collision between peer path and our current path.
 
@@ -218,15 +256,15 @@ class AMRAgent:
         return False
 
     def _handle_clock(self, payload: dict) -> None:
-        """Process global clock tick and update position along current path.
+        """Process global clock tick, handle bidding, and update position along current path.
 
         Args:
             payload: JSON payload containing current simulation time.
         """
         self.local_time = payload.get("time", self.local_time)
+        current_time = time.time()
 
         # Throttled sabotage check - only poll every 2 seconds to prevent blocking
-        current_time = time.time()
         if current_time - self.last_sabotage_check > 2.0:
             self.last_sabotage_check = current_time
             try:
@@ -240,6 +278,50 @@ class AMRAgent:
         if self.status == "YIELDING" and current_time >= self.yield_cooldown:
             self.status = "ACTIVE"
 
+        # Edge-AI Bidding Logic: Poll for tasks when DOCKED
+        if self.status == "DOCKED":
+            try:
+                res = requests.get("http://localhost:8000/api/tasks", timeout=0.5)
+                tasks = res.json().get("tasks", [])
+                for task in tasks:
+                    if not task.get("claimed", False):
+                        # Calculate bid cost: Manhattan distance + battery penalty
+                        distance = abs(self.current_pos[0] - task["x"]) + abs(self.current_pos[1] - task["y"])
+                        battery_penalty = (100 - self.battery) * 0.1  # Higher penalty for lower battery
+                        self.bid_cost = distance + battery_penalty
+                        self.pending_task = task
+                        self.bid_broadcast_time = self.local_time
+                        
+                        # Broadcast bid to peers
+                        bid_payload = {
+                            "sender_id": self.agent_id,
+                            "task": task,
+                            "bid_cost": self.bid_cost,
+                            "priority": self.priority,
+                        }
+                        self.client.publish("fleet/bids", json.dumps(bid_payload), qos=1)
+                        logger.info(f"Agent {self.agent_id}: Bid {self.bid_cost:.1f} for task ({task['x']}, {task['y']})")
+                        break  # Only bid on one task at a time
+            except Exception as e:
+                logger.debug(f"Agent {self.agent_id}: Failed to poll tasks: {e}")
+
+        # Check if we won the bid (wait 1 tick after broadcasting)
+        if (self.status == "DOCKED" and self.pending_task and self.bid_broadcast_time is not None 
+            and self.local_time > self.bid_broadcast_time):
+            # We won! Claim the task and start moving
+            self.status = "MOVING"
+            task = self.pending_task
+            self.current_goal = (task["x"], task["y"])
+            self.goal = (task["x"], task["y"])
+            
+            # Mark task as claimed (we can't actually modify the server list, but we track locally)
+            # Plan path to task
+            self.plan_to_goal(task["x"], task["y"])
+            
+            self.pending_task = None
+            self.bid_cost = None
+            self.bid_broadcast_time = None
+
         # Track previous position to detect movement
         prev_pos = self.current_pos
 
@@ -248,11 +330,56 @@ class AMRAgent:
             # Don't advance along path - stay frozen
             pass
         else:
-            # Advance along path if current time matches a path node
+            # Space-Time Collision Prevention: Check intended next position
+            next_pos = None
             for x, y, t in self.current_path:
-                if t == self.local_time:
-                    self.current_pos = (x, y)
+                if t == self.local_time + 1:  # Next tick
+                    next_pos = (x, y)
                     break
+            self.intended_next_pos = next_pos
+
+            # Check if another agent intends to occupy the same position next tick
+            if next_pos and self.status == "MOVING":
+                conflict_detected = False
+                for x, y, t in self.current_path:
+                    if t == self.local_time + 1:
+                        # Check dynamic reservations for next tick
+                        if t in self.dynamic_reservations and next_pos in self.dynamic_reservations[t]:
+                            conflict_detected = True
+                            break
+                
+                if conflict_detected:
+                    # Lower priority waits 1 tick
+                    should_wait = False
+                    # Find the conflicting agent's priority from reservations
+                    # For simplicity, if we have lower priority, we wait
+                    # This is a simplified check - in reality we'd track which agent reserved the spot
+                    if self.priority < 5:  # Not highest priority
+                        should_wait = True
+                    
+                    if should_wait:
+                        self.status = "YIELDING"
+                        self.yield_cooldown = current_time + 1.5  # Wait 1.5 seconds (3 ticks)
+                        logger.warning(f"Agent {self.agent_id}: Space-time conflict at {next_pos}, yielding for 1 tick")
+                        # Don't advance this tick
+                    else:
+                        # Advance along path if current time matches a path node
+                        for x, y, t in self.current_path:
+                            if t == self.local_time:
+                                self.current_pos = (x, y)
+                                break
+                else:
+                    # No conflict, advance normally
+                    for x, y, t in self.current_path:
+                        if t == self.local_time:
+                            self.current_pos = (x, y)
+                            break
+            else:
+                # No path or not moving, advance normally if there's a path node for current time
+                for x, y, t in self.current_path:
+                    if t == self.local_time:
+                        self.current_pos = (x, y)
+                        break
 
         # Update battery: moving costs 0.5, idle/yielding costs 0.1
         if self.current_pos != prev_pos:
@@ -260,7 +387,7 @@ class AMRAgent:
         else:
             self.battery = max(0.0, self.battery - 0.1)
 
-        # Publish telemetry with status
+        # Publish telemetry with status and intended next position
         telemetry = {
             "agent_id": self.agent_id,
             "x": self.current_pos[0],
@@ -269,6 +396,7 @@ class AMRAgent:
             "battery": round(self.battery, 1),
             "priority": self.priority,
             "status": self.status,
+            "intended_next_pos": self.intended_next_pos,
         }
         self.client.publish("fleet/telemetry", json.dumps(telemetry), qos=1)
 
