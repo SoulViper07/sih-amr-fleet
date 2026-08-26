@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, Box, Html, Text, RoundedBox } from '@react-three/drei';
 import * as THREE from 'three';
+import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Activity, 
   Clock, 
@@ -160,7 +161,7 @@ const Scene = ({ robots, obstacles, onFloorClick }) => {
       })}
     </>
   );
-};
+});
 
 const DashboardPanel = ({ 
   robots, 
@@ -186,7 +187,12 @@ const DashboardPanel = ({
   };
 
   return (
-    <div className="w-full h-full flex flex-col bg-neutral-900 border-l border-yellow-700/30 p-6 overflow-hidden">
+    <motion.div
+      className="w-full h-full flex flex-col bg-neutral-900 border-l border-yellow-700/30 p-6 overflow-hidden"
+      initial={{ x: '100%', opacity: 0 }}
+      animate={{ x: 0, opacity: 1 }}
+      transition={{ type: 'spring', damping: 20, stiffness: 100, delay: 0.2 }}
+    >
       {/* Header */}
       <div className="flex items-center justify-between mb-6 border-b border-yellow-700/20 pb-4">
         <div className="flex items-center gap-3">
@@ -194,7 +200,14 @@ const DashboardPanel = ({
             <Radio className="w-5 h-5 text-yellow-500" />
           </div>
           <div>
-            <h1 className="text-xl font-bold tracking-tight text-yellow-300">EDGE-AI FLEET</h1>
+            <motion.h1
+              className="text-xl font-bold tracking-tight text-yellow-300"
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.5 }}
+            >
+              EDGE-AI FLEET
+            </motion.h1>
             <p className="text-xs text-yellow-600 uppercase tracking-widest">COORDINATION SYSTEM</p>
           </div>
         </div>
@@ -220,9 +233,11 @@ const DashboardPanel = ({
         </div>
         <div className="grid grid-cols-2 gap-2">
           {['AMR-1', 'AMR-2', 'AMR-3', 'AMR-4'].map((agent) => (
-            <button
+            <motion.button
               key={agent}
               onClick={() => setSelectedAgent(agent)}
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
               className={`px-3 py-2 rounded font-medium text-xs uppercase tracking-wide transition-all text-neutral-300 ${
                 selectedAgent === agent
                   ? 'bg-yellow-600/20 border-2 border-yellow-500 text-yellow-300 shadow-[0_0_10px_rgba(234,179,8,0.3)]'
@@ -230,7 +245,7 @@ const DashboardPanel = ({
               }`}
             >
               {agent}
-            </button>
+            </motion.button>
           ))}
         </div>
       </div>
@@ -264,10 +279,12 @@ const DashboardPanel = ({
               <div className="flex items-center gap-2 mb-2">
                 <div className="flex-shrink-0">{getBatteryIcon(pos.battery)}</div>
                 <div className="flex-1 h-1.5 bg-neutral-700 rounded-full overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all duration-500 ${getBatteryColor(pos.battery)}`}
-                    style={{ width: `${pos.battery}%` }}
-                  ></div>
+                  <motion.div
+                    className={`h-full rounded-full ${getBatteryColor(pos.battery)}`}
+                    initial={{ width: 0 }}
+                    animate={{ width: `${pos.battery}%` }}
+                    transition={{ type: 'spring', damping: 20, stiffness: 100 }}
+                  />
                 </div>
                 <span className={`font-mono text-xs w-10 text-right ${pos.battery > 50 ? 'text-emerald-400' : pos.battery > 20 ? 'text-amber-400' : 'text-red-400'}`}>
                   {pos.battery}%
@@ -297,16 +314,25 @@ const DashboardPanel = ({
           {logs.length === 0 ? (
             <div className="text-neutral-500 italic">AWAITING YIELD EVENTS...</div>
           ) : (
-            logs.map((log, idx) => (
-              <div key={idx} className="mb-1 pb-1 last:mb-0 border-b border-neutral-700/50">
-                <span className="text-yellow-500">[FEED] </span>
-                <span>{log}</span>
-              </div>
-            ))
+            <AnimatePresence>
+              {logs.map((log, idx) => (
+                <motion.div
+                  key={log + idx}
+                  initial={{ opacity: 0, y: -20, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.9 }}
+                  transition={{ duration: 0.3 }}
+                  className="mb-1 pb-1 last:mb-0 border-b border-neutral-700/50"
+                >
+                  <span className="text-yellow-500">[FEED] </span>
+                  <span>{log}</span>
+                </motion.div>
+              ))
+            </AnimatePresence>
           )}
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 };
 
