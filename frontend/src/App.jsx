@@ -1,8 +1,314 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Activity, Clock, Cpu, Battery, Zap, MapPin, Target, Terminal, Wifi, Shield, Gauge, Radio } from 'lucide-react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { Canvas, useFrame } from '@react-three/fiber';
+import { OrbitControls, Box, Html, Text, RoundedBox } from '@react-three/drei';
+import * as THREE from 'three';
+import { 
+  Activity, 
+  Clock, 
+  Cpu, 
+  Battery, 
+  Zap, 
+  MapPin, 
+  Target, 
+  Terminal, 
+  Wifi, 
+  Shield, 
+  Gauge, 
+  Radio,
+  CheckCircle,
+  AlertCircle
+} from 'lucide-react';
 
 const WS_URL = 'ws://localhost:8000/ws';
 const API_URL = 'http://localhost:8000';
+const GRID_SIZE = 20;
+const CELL_SIZE = 1;
+const GRID_HALF = GRID_SIZE / 2;
+
+function gridToWorld(x, y) {
+  return [x - GRID_HALF + 0.5, 0.5, y - GRID_HALF + 0.5];
+}
+
+function worldToGrid(x, z) {
+  const gx = Math.floor(x + GRID_HALF);
+  const gy = Math.floor(z + GRID_HALF);
+  return [Math.max(0, Math.min(GRID_SIZE - 1, gx)), Math.max(0, Math.min(GRID_SIZE - 1, gy))];
+}
+
+const robotColors = [
+  '#fbbf24', // AMR-1 - amber
+  '#f97316', // AMR-2 - orange
+  '#eab308', // AMR-3 - yellow
+  '#fde047', // AMR-4 - light yellow
+];
+
+const AmrMesh = React.memo(({ id, index, targetPosition, battery, priority }) => {
+  const meshRef = useRef();
+  const [hovered, setHovered] = useState(false);
+
+  useFrame((state, delta) => {
+    if (meshRef.current && targetPosition) {
+      meshRef.current.position.lerp(new THREE.Vector3(...targetPosition), Math.min(delta * 8, 1));
+    }
+  });
+
+  const color = robotColors[index % robotColors.length];
+
+  return (
+    <group ref={meshRef} position={targetPosition || [0, 0, 0]}>
+      <Box
+        args={[0.7, 0.7, 0.7]}
+        position={[0, 0.35, 0]}
+        castShadow
+        receiveShadow
+        onPointerOver={() => setHovered(true)}
+        onPointerOut={() => setHovered(false)}
+      >
+        <meshStandardMaterial 
+          color={color} 
+          metalness={0.3}
+          roughness={0.4}
+          emissive={color}
+          emissiveIntensity={hovered ? 0.3 : 0.1}
+        />
+      </Box>
+      <Html
+        position={[0, 1.2, 0]}
+        style={{
+          pointerEvents: 'none',
+          textAlign: 'center',
+          fontSize: '11px',
+          fontFamily: 'monospace',
+          fontWeight: 'bold',
+          color: '#fde68a',
+          textShadow: '0 0 10px rgba(251, 191, 36, 0.8)',
+        }}
+      >
+        <div style={{ background: 'rgba(0,0,0,0.7)', padding: '2px 6px', borderRadius: '4px', border: `1px solid ${color}`, display: 'inline-block' }}>
+          <div>{id}</div>
+          <div style={{ fontSize: '10px', opacity: 0.8 }}>{battery}%</div>
+        </div>
+      </Html>
+      <Box
+        args={[0.5, 0.02, 0.5]}
+        position={[0, 0.01, 0]}
+        castShadow
+      >
+        <meshBasicMaterial color={color} transparent opacity={0.3} />
+      </Box>
+    </group>
+  );
+});
+
+const Scene = ({ robots, obstacles, onFloorClick }) => {
+  return (
+    <>
+      <ambientLight intensity={0.6} color="#fef3c7" />
+      <directionalLight 
+        position={[15, 20, 15]} 
+        intensity={2}
+        castShadow
+        shadow-mapSize-width={2048}
+        shadow-mapSize-height={2048}
+        shadow-camera-near={0.1}
+        shadow-camera-far={50}
+        shadow-camera-left={-20}
+        shadow-camera-right={20}
+        shadow-camera-top={20}
+        shadow-camera-bottom={-20}
+      />
+      <directionalLight position={[-10, 10, -10]} intensity={0.5} color="#fef3c7" />
+      
+      <gridHelper args={[GRID_SIZE, GRID_SIZE, '#78350f', '#451a03']} position={[0, 0, 0]} />
+      
+      <mesh
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, 0, 0]}
+        onPointerDown={onFloorClick}
+      >
+        <planeGeometry args={[GRID_SIZE, GRID_SIZE]} />
+        <meshBasicMaterial transparent opacity={0} />
+      </mesh>
+
+      {obstacles.map((obs, i) => {
+        const [wx, , wz] = gridToWorld(obs[0], obs[1]);
+        return (
+          <Box
+            key={`obs-${i}`}
+            position={[wx, 0.5, wz]}
+            args={[0.9, 1, 0.9]}
+            castShadow
+            receiveShadow
+          >
+            <meshStandardMaterial color="#18181b" metalness={0.1} roughness={0.9} />
+          </Box>
+        );
+      })}
+
+      {Object.entries(robots).map(([id, pos], idx) => {
+        const targetPos = gridToWorld(pos.x, pos.y);
+        return (
+          <AmrMesh
+            key={id}
+            id={id}
+            index={idx}
+            targetPosition={targetPos}
+            battery={pos.battery}
+            priority={pos.priority}
+          />
+        );
+      })}
+    </>
+  );
+};
+
+const DashboardPanel = ({ 
+  robots, 
+  time, 
+  isConnected, 
+  selectedAgent, 
+  setSelectedAgent, 
+  logs,
+  handleDispatch 
+}) => {
+  const getBatteryColor = (level) => {
+    if (level > 50) return 'bg-emerald-500';
+    if (level > 20) return 'bg-amber-500';
+    return 'bg-red-500';
+  };
+
+  const getBatteryIcon = (level) => {
+    if (level > 75) return <Battery className="w-4 h-4 text-emerald-500" />;
+    if (level > 50) return <Battery className="w-4 h-4 text-emerald-400" />;
+    if (level > 25) return <Battery className="w-4 h-4 text-amber-400" />;
+    if (level > 10) return <Zap className="w-4 h-4 text-amber-500" />;
+    return <Zap className="w-4 h-4 text-red-500 animate-pulse" />;
+  };
+
+  return (
+    <div className="w-full h-full flex flex-col bg-neutral-900 border-l border-yellow-700/30 p-6 overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6 border-b border-yellow-700/20 pb-4">
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-yellow-700/20 rounded-lg border border-yellow-700/30">
+            <Radio className="w-5 h-5 text-yellow-500" />
+          </div>
+          <div>
+            <h1 className="text-xl font-bold tracking-tight text-yellow-300">EDGE-AI FLEET</h1>
+            <p className="text-xs text-yellow-600 uppercase tracking-widest">COORDINATION SYSTEM</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 bg-neutral-800 px-3 py-1.5 rounded-lg border border-yellow-700/30">
+            <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'}`}></div>
+            <span className={`text-xs font-medium ${isConnected ? 'text-yellow-400' : 'text-red-500'}`}>
+              {isConnected ? 'LINK' : 'DOWN'}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5 bg-neutral-800 px-3 py-1.5 rounded-lg border border-yellow-700/30">
+            <Clock className="w-3.5 h-3.5 text-yellow-600" />
+            <span className="text-lg font-mono tabular-nums text-yellow-400">T+{String(time).padStart(3, '0')}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Commander Controls */}
+      <div className="mb-4 bg-neutral-800/50 rounded-lg border border-yellow-700/20 p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <Target className="w-4 h-4 text-yellow-500" />
+          <h3 className="font-semibold text-yellow-300 text-sm">COMMANDER CONTROLS</h3>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          {['AMR-1', 'AMR-2', 'AMR-3', 'AMR-4'].map((agent) => (
+            <button
+              key={agent}
+              onClick={() => setSelectedAgent(agent)}
+              className={`px-3 py-2 rounded font-medium text-xs uppercase tracking-wide transition-all text-neutral-300 ${
+                selectedAgent === agent
+                  ? 'bg-yellow-600/20 border-2 border-yellow-500 text-yellow-300 shadow-[0_0_10px_rgba(234,179,8,0.3)]'
+                  : 'bg-neutral-900 border border-neutral-700 hover:border-yellow-700/50 hover:bg-neutral-800'
+              }`}
+            >
+              {agent}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Active Fleet Metric */}
+      <div className="mb-4 bg-neutral-800/50 rounded-lg border border-yellow-700/20 p-4">
+        <div className="flex items-center gap-2 mb-2">
+          <Activity className="w-4 h-4 text-yellow-500" />
+          <h3 className="font-semibold text-yellow-300 text-sm">ACTIVE FLEET</h3>
+        </div>
+        <div className="flex items-baseline gap-2">
+          <span className="text-3xl font-bold text-yellow-400 tabular-nums">{Object.keys(robots).length}</span>
+          <span className="text-xs text-yellow-600">/ 4 UNITS</span>
+        </div>
+        <p className="text-xs text-yellow-600 mt-1">DECENTRALIZED NODES</p>
+      </div>
+
+      {/* Live Telemetry */}
+      <div className="mb-4 bg-neutral-800/50 rounded-lg border border-yellow-700/20 p-4 flex-shrink-0">
+        <div className="flex items-center gap-2 mb-3">
+          <Cpu className="w-4 h-4 text-yellow-500" />
+          <h3 className="font-semibold text-yellow-300 text-sm">LIVE TELEMETRY</h3>
+        </div>
+        <div className="space-y-2 max-h-[200px] overflow-y-auto">
+          {Object.entries(robots).map(([id, pos]) => (
+            <div key={id} className="bg-neutral-900 rounded border border-neutral-700 p-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="font-medium text-yellow-400 text-sm">{id}</span>
+                <span className="text-xs text-yellow-600">({pos.x}, {pos.y})</span>
+              </div>
+              <div className="flex items-center gap-2 mb-2">
+                <div className="flex-shrink-0">{getBatteryIcon(pos.battery)}</div>
+                <div className="flex-1 h-1.5 bg-neutral-700 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${getBatteryColor(pos.battery)}`}
+                    style={{ width: `${pos.battery}%` }}
+                  ></div>
+                </div>
+                <span className={`font-mono text-xs w-10 text-right ${pos.battery > 50 ? 'text-emerald-400' : pos.battery > 20 ? 'text-amber-400' : 'text-red-400'}`}>
+                  {pos.battery}%
+                </span>
+              </div>
+              <div className="flex items-center gap-3 text-[10px] text-yellow-600">
+                <span className="flex items-center gap-1"><Wifi className="w-2.5 h-2.5" /> PRI: {pos.priority ?? 'N/A'}</span>
+                <span className="flex items-center gap-1"><Shield className="w-2.5 h-2.5" /> BAT: {pos.battery}%</span>
+                <span className="flex items-center gap-1"><Gauge className="w-2.5 h-2.5" /> POS: ({pos.x},{pos.y})</span>
+              </div>
+            </div>
+          ))}
+          {Object.keys(robots).length === 0 && (
+            <div className="text-yellow-600 text-xs italic text-center py-8">NO TELEMETRY RECEIVED</div>
+          )}
+        </div>
+      </div>
+
+      {/* P2P Network Feed - takes remaining space */}
+      <div className="flex-1 min-h-0 bg-neutral-800/50 rounded-lg border border-yellow-700/20 p-4 overflow-y-auto custom-scrollbar">
+        <div className="flex items-center gap-2 mb-3">
+          <Terminal className="w-4 h-4 text-yellow-500" />
+          <h3 className="font-semibold text-yellow-300 text-sm">P2P NETWORK FEED</h3>
+          <span className="ml-auto text-[10px] bg-yellow-700/20 text-yellow-500 px-1.5 py-0.5 rounded">ENCRYPTED</span>
+        </div>
+        <div className="text-xs text-neutral-300 leading-relaxed font-mono">
+          {logs.length === 0 ? (
+            <div className="text-neutral-500 italic">AWAITING YIELD EVENTS...</div>
+          ) : (
+            logs.map((log, idx) => (
+              <div key={idx} className="mb-1 pb-1 last:mb-0 border-b border-neutral-700/50">
+                <span className="text-yellow-500">[FEED] </span>
+                <span>{log}</span>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
 
 export default function App() {
   const [robots, setRobots] = useState({});
@@ -14,7 +320,6 @@ export default function App() {
   const [logs, setLogs] = useState([]);
   const prevRobotPositions = useRef({});
 
-  // Fetch grid config on mount
   useEffect(() => {
     fetch(`${API_URL}/api/config`)
       .then(res => res.json())
@@ -42,7 +347,7 @@ export default function App() {
           if (prev && prev.x === data.x && prev.y === data.y && prev.time !== data.time) {
             setLogs(prevLogs => {
               const newLog = `[${data.time}] ${data.agent_id} (Pri ${data.priority}) yielding right-of-way.`;
-              const updated = [newLog, ...prevLogs].slice(0, 10);
+              const updated = [newLog, ...prevLogs].slice(0, 12);
               return updated;
             });
           }
@@ -61,7 +366,7 @@ export default function App() {
     return () => ws.close();
   }, []);
 
-  const handleCellClick = async (x, y) => {
+  const handleDispatch = useMemo(() => async (x, y) => {
     try {
       const response = await fetch(`${API_URL}/api/dispatch/${selectedAgent}`, {
         method: 'POST',
@@ -75,270 +380,80 @@ export default function App() {
     } catch (err) {
       console.error("Failed to dispatch command:", err);
     }
+  }, [selectedAgent]);
+
+  const handleFloorClick = (event) => {
+    const x = Math.floor(event.point.x + GRID_HALF);
+    const z = Math.floor(event.point.z + GRID_HALF);
+    const clampedX = Math.max(0, Math.min(GRID_SIZE - 1, x));
+    const clampedZ = Math.max(0, Math.min(GRID_SIZE - 1, z));
+    const isObstacle = obstacles.some(obs => obs[0] === clampedX && obs[1] === clampedZ);
+    if (!isObstacle) {
+      handleDispatch(clampedX, clampedZ);
+    }
   };
-
-  const gridCells = Array.from({ length: gridSize.w * gridSize.h }, (_, i) => {
-    const x = i % gridSize.w;
-    const y = Math.floor(i / gridSize.w);
-    return { x, y };
-  });
-
-  const getBatteryColor = (level) => {
-    if (level > 50) return 'bg-green-500';
-    if (level > 20) return 'bg-amber-500';
-    return 'bg-red-500';
-  };
-
-  const getBatteryIcon = (level) => {
-    if (level > 75) return <Battery className="w-4 h-4 text-green-500" />;
-    if (level > 50) return <Battery className="w-4 h-4 text-green-400" />;
-    if (level > 25) return <Battery className="w-4 h-4 text-amber-400" />;
-    if (level > 10) return <Zap className="w-4 h-4 text-amber-500" />;
-    return <Zap className="w-4 h-4 text-red-500 animate-pulse" />;
-  };
-
-  const isObstacleCell = (x, y) => {
-    return obstacles.some(obs => obs[0] === x && obs[1] === y);
-  };
-
-  const cellWidthPercent = 100 / gridSize.w;
-  const cellHeightPercent = 100 / gridSize.h;
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-[#e8f5e9] p-6 font-mono">
-      {/* Header */}
-      <header className="flex justify-between items-center mb-6 border-b border-cyan-900/30 pb-4">
-        <div className="flex items-center gap-4">
-          <div className="p-2 bg-[#111] border border-cyan-900/50 rounded-lg">
-            <Radio className="w-6 h-6 text-cyan-400" />
+    <div className="h-screen w-screen overflow-hidden bg-neutral-950 text-amber-50 flex">
+      <div className="w-2/3 h-full relative">
+        <Canvas
+          camera={{ position: [0, 25, 0], fov: 50, lookAt: [0, 0, 0] }}
+          shadows
+          style={{ touchAction: 'none' }}
+          onCreated={({ gl }) => { gl.setClearColor(0x0a0a0a, 1); }}
+        >
+          <Scene 
+            robots={robots} 
+            obstacles={obstacles} 
+            onFloorClick={handleFloorClick} 
+          />
+          <OrbitControls 
+            makeDefault 
+            enablePan={true}
+            enableZoom={true}
+            enableRotate={true}
+            minPolarAngle={0}
+            maxPolarAngle={Math.PI / 2 - 0.05}
+            minZoom={5}
+            maxZoom={60}
+          />
+        </Canvas>
+        
+        {/* Grid Legend Overlay */}
+        <div className="absolute bottom-4 left-4 right-4 flex flex-wrap justify-center gap-4 text-xs text-neutral-400 pointer-events-none">
+          <div className="flex items-center gap-1.5 bg-neutral-900/80 px-3 py-1.5 rounded border border-neutral-700 backdrop-blur">
+            <div className="w-2 h-2 rounded bg-yellow-700/30 border border-yellow-600" />
+            <span>FREE CELL</span>
           </div>
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-cyan-300">AMR FLEET COMMAND</h1>
-            <p className="text-xs text-cyan-600 uppercase tracking-widest">DECENTRALIZED COORDINATION SYSTEM</p>
+          <div className="flex items-center gap-1.5 bg-neutral-900/80 px-3 py-1.5 rounded border border-neutral-700 backdrop-blur">
+            <div className="w-2 h-2 rounded bg-yellow-400 shadow-[0_0_8px_rgba(251,191,36,0.8)]" />
+            <span>AMR UNIT</span>
           </div>
-        </div>
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2 bg-[#111] px-4 py-2 rounded-lg border border-cyan-900/50">
-            <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-cyan-400 animate-pulse' : 'bg-red-500'}`}></div>
-            <span className={`text-xs font-medium ${isConnected ? 'text-cyan-400' : 'text-red-500'}`}>
-              {isConnected ? 'LINK ESTABLISHED' : 'LINK DOWN'}
-            </span>
+          <div className="flex items-center gap-1.5 bg-neutral-900/80 px-3 py-1.5 rounded border border-neutral-700 backdrop-blur">
+            <div className="w-2 h-2 rounded bg-neutral-800 border border-neutral-600" />
+            <span>OBSTACLE</span>
           </div>
-          <div className="flex items-center gap-2 bg-[#111] px-4 py-2 rounded-lg border border-cyan-900/50">
-            <Clock className="w-4 h-4 text-cyan-600" />
-            <span className="text-lg font-mono tabular-nums text-amber-400">T+{String(time).padStart(3, '0')}</span>
-          </div>
-        </div>
-      </header>
-
-      <main className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-6">
-        {/* Left Column: The Grid */}
-        <div className="lg:col-span-2 panel-cyber p-4 rounded-xl">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold flex items-center gap-2 text-cyan-300">
-              <MapPin className="w-4 h-4" />
-              TACTICAL GRID <span className="text-xs text-cyan-600">({gridSize.w}×{gridSize.h})</span>
-            </h2>
-            <div className="flex items-center gap-3 text-xs text-cyan-600">
-              <Target className="w-3 h-3" />
-              <span>SELECTED: <strong className="text-amber-400">{selectedAgent}</strong></span>
-            </div>
-          </div>
-          
-          <div className="relative aspect-square w-full max-w-4xl mx-auto tech-border rounded-[4px] overflow-hidden">
-            {/* Static Grid Layer */}
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: `repeat(${gridSize.w}, 1fr)`,
-                gridTemplateRows: `repeat(${gridSize.h}, 1fr)`,
-                width: '100%',
-                height: '100%',
-              }}
-              className="grid-cell"
-            >
-              {gridCells.map((cell) => {
-                const isRobotHere = Object.entries(robots).find(([id, pos]) => pos.x === cell.x && pos.y === cell.y);
-                const isObstacle = isObstacleCell(cell.x, cell.y);
-                return (
-                  <div
-                    key={`${cell.x}-${cell.y}`}
-                    onClick={() => !isRobotHere && !isObstacle && handleCellClick(cell.x, cell.y)}
-                    className={`relative ${isObstacle ? 'obstacle' : ''} ${isRobotHere ? 'occupied' : ''}`}
-                    style={{ userSelect: 'none' }}
-                  >
-                    {!isObstacle && !isRobotHere && (
-                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                        <div className="w-1 h-1 rounded-full bg-cyan-900/30" />
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Dynamic Robot Layer - Absolute Positioning for Smooth Animation */}
-            <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 10 }}>
-              {Object.entries(robots).map(([id, pos]) => (
-                <div
-                  key={id}
-                  style={{
-                    position: 'absolute',
-                    left: `${(pos.x / gridSize.w) * 100}%`,
-                    top: `${(pos.y / gridSize.h) * 100}%`,
-                    width: `${cellWidthPercent}%`,
-                    height: `${cellHeightPercent}%`,
-                    transition: 'left 0.8s cubic-bezier(0.4, 0, 0.2, 1), top 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
-                  }}
-                >
-                  <div className="absolute inset-0 flex items-center justify-center robot-marker">
-                    <div className="relative w-full h-full flex items-center justify-center">
-                      {/* Outer glow ring */}
-                      <div className="absolute inset-0 rounded-full border border-amber-400/30 animate-pulse" style={{ animationDuration: '2s' }} />
-                      {/* Core marker */}
-                      <div className="relative z-10 w-3/4 h-3/4 bg-amber-400 rounded-full shadow-[0_0_20px_rgba(251,191,36,1),0_0_40px_rgba(251,191,36,0.6)] border-2 border-white flex items-center justify-center font-bold text-black text-[10px] leading-none">
-                        {id.split('-')[1]}
-                      </div>
-                      {/* Direction indicator */}
-                      <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-cyan-400 rounded-full border-2 border-black opacity-80" />
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Grid coordinate labels */}
-            <div className="absolute bottom-1 right-1 text-[7px] text-cyan-900/50 font-mono pointer-events-none">
-              {gridSize.w - 1},{gridSize.h - 1}
-            </div>
-          </div>
-
-          {/* Legend */}
-          <div className="mt-4 flex flex-wrap gap-4 text-xs text-cyan-600">
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-cyan-900/30" />
-              <span>FREE</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.8)] border border-white" />
-              <span>AMR</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded obstacle" style={{ backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 3px, rgba(8,145,178,0.3) 3px, rgba(8,145,178,0.3) 6px)' }} />
-              <span>OBSTACLE</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-cyan-400" />
-              <span>TARGET</span>
-            </div>
+          <div className="flex items-center gap-1.5 bg-neutral-900/80 px-3 py-1.5 rounded border border-neutral-700 backdrop-blur">
+            <div className="w-2 h-2 rounded bg-yellow-500" />
+            <span>DISPATCH TARGET</span>
           </div>
         </div>
 
-        {/* Right Column: Metrics */}
-        <div className="space-y-4">
-          {/* Commander Controls */}
-          <div className="panel-cyber p-4 rounded-lg">
-            <div className="flex items-center gap-2 mb-3">
-              <Target className="w-5 h-5 text-cyan-400" />
-              <h3 className="font-semibold text-cyan-300">COMMANDER CONTROLS</h3>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              {['AMR-1', 'AMR-2', 'AMR-3', 'AMR-4'].map((agent) => (
-                <button
-                  key={agent}
-                  onClick={() => setSelectedAgent(agent)}
-                  className={`btn-cyber px-3 py-2 rounded font-medium text-xs uppercase tracking-wide transition-all ${
-                    selectedAgent === agent ? 'active' : ''
-                  }`}
-                >
-                  {agent}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* P2P Network Feed */}
-          <div className="panel-cyber p-4 rounded-lg">
-            <div className="flex items-center gap-2 mb-3">
-              <Terminal className="w-5 h-5 text-green-400" />
-              <h3 className="font-semibold text-green-400">P2P NETWORK FEED</h3>
-              <span className="ml-auto text-[10px] bg-green-900/30 text-green-400 px-1.5 py-0.5 rounded">ENCRYPTED</span>
-            </div>
-            <div className="terminal-feed crt-scanline rounded p-3 h-56 overflow-y-auto text-[11px] text-green-300 leading-relaxed">
-              {logs.length === 0 ? (
-                <div className="text-green-600 italic">> AWAITING YIELD EVENTS...</div>
-              ) : (
-                logs.map((log, idx) => (
-                  <div key={idx} className="mb-1 border-b border-green-900/30 pb-1 last:border-0 animate-fade-in-up" style={{ animationDelay: `${idx * 0.05}s` }}>
-                    <span className="text-green-500">[FEED] </span>
-                    <span className="text-green-300">{log}</span>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-
-          {/* Active Fleet */}
-          <div className="panel-cyber p-4 rounded-lg">
-            <div className="flex items-center gap-2 mb-3">
-              <Activity className="w-5 h-5 text-cyan-400" />
-              <h3 className="font-semibold text-cyan-300">ACTIVE FLEET</h3>
-            </div>
-            <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-bold text-amber-400 tabular-nums">{Object.keys(robots).length}</span>
-              <span className="text-xs text-cyan-600">/ 4 UNITS</span>
-            </div>
-            <p className="text-xs text-cyan-600 mt-1">DECENTRALIZED NODES</p>
-          </div>
-
-          {/* Live Telemetry */}
-          <div className="panel-cyber p-4 rounded-lg">
-            <div className="flex items-center gap-2 mb-3">
-              <Cpu className="w-5 h-5 text-cyan-400" />
-              <h3 className="font-semibold text-cyan-300">LIVE TELEMETRY</h3>
-            </div>
-            <div className="space-y-3">
-              {Object.entries(robots).map(([id, pos]) => (
-                <div key={id} className="bg-[#0a0a0a] rounded border border-cyan-900/30 p-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="font-medium text-amber-400">{id}</span>
-                    <span className="text-xs text-cyan-600">({pos.x}, {pos.y})</span>
-                  </div>
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className="flex-shrink-0">{getBatteryIcon(pos.battery)}</div>
-                    <div className="flex-1 h-1.5 bg-cyan-900/50 rounded-full overflow-hidden">
-                      <div
-                        className={`h-full rounded-full transition-all duration-700 ease-out ${getBatteryColor(pos.battery)}`}
-                        style={{ width: `${pos.battery}%`, boxShadow: `0 0 10px ${pos.battery > 50 ? 'rgba(34,197,94,0.8)' : pos.battery > 20 ? 'rgba(251,191,36,0.8)' : 'rgba(239,68,68,0.8)'}` }}
-                      ></div>
-                    </div>
-                    <span className={`font-mono text-xs w-10 text-right ${pos.battery > 50 ? 'text-green-400' : pos.battery > 20 ? 'text-amber-400' : 'text-red-400'}`}>
-                      {pos.battery}%
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-4 text-[10px] text-cyan-600">
-                    <span className="flex items-center gap-1">
-                      <Wifi className="w-2.5 h-2.5" />
-                      PRI: {pos.priority ?? 'N/A'}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Shield className="w-2.5 h-2.5" />
-                      BAT: {pos.battery}%
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Gauge className="w-2.5 h-2.5" />
-                      POS: ({pos.x},{pos.y})
-                    </span>
-                  </div>
-                </div>
-              ))}
-              {Object.keys(robots).length === 0 && (
-                <div className="text-cyan-600 text-xs italic text-center py-8">> NO TELEMETRY RECEIVED</div>
-              )}
-            </div>
-          </div>
+        {/* Camera Hint */}
+        <div className="absolute top-4 left-4 text-xs text-neutral-500 bg-neutral-900/80 px-3 py-1.5 rounded border border-neutral-700 backdrop-blur">
+          Drag to rotate • Scroll to zoom • Click floor to dispatch
         </div>
-      </main>
+      </div>
+
+      <DashboardPanel
+        robots={robots}
+        time={time}
+        isConnected={isConnected}
+        selectedAgent={selectedAgent}
+        setSelectedAgent={setSelectedAgent}
+        logs={logs}
+        handleDispatch={handleDispatch}
+      />
     </div>
   );
 }
