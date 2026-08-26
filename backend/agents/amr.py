@@ -3,6 +3,7 @@
 import json
 import logging
 import requests
+import time
 from typing import TYPE_CHECKING
 
 import paho.mqtt.client as mqtt
@@ -48,6 +49,7 @@ class AMRAgent:
         self.current_goal: tuple[int, int] | None = None
         self.battery = 100.0
         self.status = "ACTIVE"
+        self.last_sabotage_check = 0.0
 
         # MQTT client setup
         self.client = mqtt.Client(client_id=agent_id, clean_session=True)
@@ -196,13 +198,16 @@ class AMRAgent:
         """
         self.local_time = payload.get("time", self.local_time)
 
-        # Check sabotage status
-        try:
-            res = requests.get("http://localhost:8000/api/sabotage/status", timeout=0.5)
-            if self.agent_id in res.json().get("sabotaged", []):
-                self.status = "DEAD"
-        except Exception:
-            pass
+        # Throttled sabotage check - only poll every 2 seconds to prevent blocking
+        current_time = time.time()
+        if current_time - self.last_sabotage_check > 2.0:
+            self.last_sabotage_check = current_time
+            try:
+                res = requests.get("http://localhost:8000/api/sabotage/status", timeout=0.5)
+                if self.agent_id in res.json().get("sabotaged", []):
+                    self.status = "DEAD"
+            except Exception:
+                pass
 
         # Track previous position to detect movement
         prev_pos = self.current_pos

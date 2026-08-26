@@ -44,7 +44,7 @@ const robotColors = [
   '#fde047', // AMR-4 - light yellow
 ];
 
-const AmrMesh = React.memo(({ id, index, targetPosition, battery, priority }) => {
+const AmrMesh = React.memo(({ id, index, targetPosition, battery, priority, status }) => {
   const meshRef = useRef();
   const [hovered, setHovered] = useState(false);
   
@@ -57,21 +57,19 @@ const AmrMesh = React.memo(({ id, index, targetPosition, battery, priority }) =>
     return initialPos;
   });
 
-  useFrame((state, delta) => {
+  useFrame((_, delta) => {
     if (meshRef.current && targetPosition && Array.isArray(targetPosition) && targetPosition.length === 3) {
       const target = new THREE.Vector3(targetPosition[0], targetPosition[1], targetPosition[2]);
       if (!isNaN(target.x) && !isNaN(target.y) && !isNaN(target.z)) {
-        pos.lerp(target, Math.min(delta * 8, 1));
-        meshRef.current.position.copy(pos);
+        meshRef.current.position.lerp(target, Math.min(1, delta * 8));
       }
     }
   });
 
   const isMoving = targetPosition && 
-    (Math.abs(pos.x - targetPosition[0]) > 0.01 || Math.abs(pos.z - targetPosition[2]) > 0.01);
+    (Math.abs(meshRef.current?.position.x - targetPosition[0]) > 0.01 || Math.abs(meshRef.current?.position.z - targetPosition[2]) > 0.01);
 
-  const targetX = targetPosition ? targetPosition[0] - 10 : 0;
-  const targetZ = targetPosition ? targetPosition[1] - 10 : 0;
+  const isDead = status === "DEAD";
 
   return (
     <group ref={meshRef} position={pos}>
@@ -84,25 +82,12 @@ const AmrMesh = React.memo(({ id, index, targetPosition, battery, priority }) =>
         onPointerOut={() => setHovered(false)}
       >
         <meshStandardMaterial 
-          color="#d97706" 
-          emissive="#f59e0b" 
-          emissiveIntensity={2} 
+          color={isDead ? "#3f3f46" : "#d97706"} 
+          emissive={isDead ? "#3f3f46" : "#f59e0b"} 
+          emissiveIntensity={isDead ? 0.2 : 2} 
           toneMapped={false}
         />
       </Box>
-      {isMoving && (
-        <Line
-          points={[
-            [0, -0.4, 0], 
-            [targetX - pos.x, -0.4, targetZ - pos.z]
-          ]}
-          color="#10b981"
-          lineWidth={2}
-          dashed
-          dashSize={0.5}
-          gapSize={0.2}
-        />
-      )}
       <Html
         position={[0, 1.2, 0]}
         style={{
@@ -111,11 +96,11 @@ const AmrMesh = React.memo(({ id, index, targetPosition, battery, priority }) =>
           fontSize: '11px',
           fontFamily: 'monospace',
           fontWeight: 'bold',
-          color: '#fde68a',
-          textShadow: '0 0 10px rgba(251, 191, 36, 0.8)',
+          color: isDead ? '#71717a' : '#fde68a',
+          textShadow: isDead ? 'none' : '0 0 10px rgba(251, 191, 36, 0.8)',
         }}
       >
-        <div style={{ background: 'rgba(0,0,0,0.7)', padding: '2px 6px', borderRadius: '4px', border: '1px solid #f59e0b', display: 'inline-block' }}>
+        <div style={{ background: 'rgba(0,0,0,0.7)', padding: '2px 6px', borderRadius: '4px', border: `1px solid ${isDead ? '#52525b' : '#f59e0b'}`, display: 'inline-block' }}>
           <div>{id}</div>
           <div style={{ fontSize: '10px', opacity: 0.8 }}>{battery}%</div>
         </div>
@@ -125,7 +110,7 @@ const AmrMesh = React.memo(({ id, index, targetPosition, battery, priority }) =>
         position={[0, 0.01, 0]}
         castShadow
       >
-        <meshBasicMaterial color="#f59e0b" transparent opacity={0.3} />
+        <meshBasicMaterial color={isDead ? "#52525b" : "#f59e0b"} transparent opacity={isDead ? 0.15 : 0.3} />
       </Box>
     </group>
   );
@@ -176,6 +161,33 @@ const Scene = ({ robots, obstacles, onFloorClick }) => {
         );
       })}
 
+      {/* Trajectory lines in world space - rendered once per robot */}
+      {Object.entries(robots).map(([id, data]) => {
+        const hasTarget = data.target_x !== undefined && data.target_y !== undefined;
+        const isMoving = hasTarget && (data.x !== data.target_x || data.y !== data.target_y);
+        if (!isMoving) return null;
+        
+        const startX = data.x - GRID_HALF + 0.5;
+        const startZ = data.y - GRID_HALF + 0.5;
+        const targetX = data.target_x - GRID_HALF + 0.5;
+        const targetZ = data.target_y - GRID_HALF + 0.5;
+        
+        return (
+          <Line
+            key={`path-${id}`}
+            points={[
+              [startX, 0.05, startZ],
+              [targetX, 0.05, targetZ]
+            ]}
+            color="#eab308"
+            lineWidth={1.5}
+            dashed
+            dashSize={0.4}
+            gapSize={0.2}
+          />
+        );
+      })}
+
       {Object.entries(robots).map(([id, pos], idx) => {
         const targetPos = gridToWorld(pos.x, pos.y);
         return (
@@ -186,6 +198,7 @@ const Scene = ({ robots, obstacles, onFloorClick }) => {
             targetPosition={targetPos}
             battery={pos.battery}
             priority={pos.priority}
+            status={pos.status}
           />
         );
       })}
@@ -215,6 +228,14 @@ const DashboardPanel = ({
     if (level > 10) return <Zap className="w-4 h-4 text-amber-500" />;
     return <Zap className="w-4 h-4 text-red-500 animate-pulse" />;
   };
+
+  const getStatusBadge = (status) => {
+    if (status === "DEAD") return <span className="px-1.5 py-0.5 text-[9px] font-medium bg-red-900/50 text-red-400 border border-red-700/50 rounded">DEAD</span>;
+    if (status === "YIELDING") return <span className="px-1.5 py-0.5 text-[9px] font-medium bg-amber-900/50 text-amber-400 border border-amber-700/50 rounded">YIELDING</span>;
+    return <span className="px-1.5 py-0.5 text-[9px] font-medium bg-emerald-900/50 text-emerald-400 border border-emerald-700/50 rounded">ACTIVE</span>;
+  };
+
+  const robotIds = Object.keys(robots).sort();
 
   return (
     <motion.div
@@ -255,14 +276,14 @@ const DashboardPanel = ({
         </div>
       </div>
 
-      {/* Commander Controls */}
+      {/* Commander Controls - Dynamic grid based on active robots */}
       <div className="mb-3 bg-neutral-800/50 rounded-lg border border-yellow-700/20 p-3">
         <div className="flex items-center gap-1.5 mb-2">
           <Target className="w-3.5 h-3.5 text-yellow-500" />
           <h3 className="font-semibold text-yellow-300 text-xs">COMMANDER CONTROLS</h3>
         </div>
-        <div className="grid grid-cols-2 gap-1.5">
-          {['AMR-1', 'AMR-2', 'AMR-3', 'AMR-4'].map((agent) => (
+        <div className="grid grid-cols-3 gap-1.5">
+          {robotIds.map((agent) => (
             <motion.button
               key={agent}
               onClick={() => setSelectedAgent(agent)}
@@ -287,47 +308,51 @@ const DashboardPanel = ({
           <h3 className="font-semibold text-yellow-300 text-xs">ACTIVE FLEET</h3>
         </div>
         <div className="flex items-baseline gap-1.5">
-          <span className="text-2xl font-bold text-yellow-400 tabular-nums">{Object.keys(robots).length}</span>
-          <span className="text-[10px] text-yellow-600">/ 4 UNITS</span>
+          <span className="text-2xl font-bold text-yellow-400 tabular-nums">{robotIds.length}</span>
+          <span className="text-[10px] text-yellow-600">/ {robotIds.length} UNITS</span>
         </div>
         <p className="text-[10px] text-yellow-600 mt-0.5">DECENTRALIZED NODES</p>
       </div>
 
-      {/* Live Telemetry */}
+      {/* Live Telemetry - Dynamic with status badges */}
       <div className="mb-3 bg-neutral-800/50 rounded-lg border border-yellow-700/20 p-3 flex-shrink-0">
         <div className="flex items-center gap-1.5 mb-2">
           <Cpu className="w-3.5 h-3.5 text-yellow-500" />
           <h3 className="font-semibold text-yellow-300 text-xs">LIVE TELEMETRY</h3>
         </div>
         <div className="space-y-1.5 max-h-[180px] overflow-y-auto">
-          {Object.entries(robots).map(([id, pos]) => (
-            <div key={id} className="bg-neutral-900 rounded border border-neutral-700 p-2.5">
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="font-medium text-yellow-400 text-xs">{id}</span>
-                <span className="text-[10px] text-yellow-600">({pos.x}, {pos.y})</span>
-              </div>
-              <div className="flex items-center gap-1.5 mb-1.5">
-                <div className="flex-shrink-0">{getBatteryIcon(pos.battery)}</div>
-                <div className="flex-1 h-1.5 bg-neutral-700 rounded-full overflow-hidden">
-                  <motion.div
-                    className={`h-full rounded-full ${getBatteryColor(pos.battery)}`}
-                    initial={{ width: 0 }}
-                    animate={{ width: `${pos.battery}%` }}
-                    transition={{ type: 'spring', damping: 20, stiffness: 100 }}
-                  />
+          {robotIds.map((id) => {
+            const pos = robots[id];
+            return (
+              <div key={id} className="bg-neutral-900 rounded border border-neutral-700 p-2.5">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="font-medium text-yellow-400 text-xs">{id}</span>
+                  <span className="text-[10px] text-yellow-600">({pos.x}, {pos.y})</span>
                 </div>
-                <span className={`font-mono text-[10px] w-8 text-right ${pos.battery > 50 ? 'text-emerald-400' : pos.battery > 20 ? 'text-amber-400' : 'text-red-400'}`}>
-                  {pos.battery}%
-                </span>
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <div className="flex-shrink-0">{getBatteryIcon(pos.battery)}</div>
+                  <div className="flex-1 h-1.5 bg-neutral-700 rounded-full overflow-hidden">
+                    <motion.div
+                      className={`h-full rounded-full ${getBatteryColor(pos.battery)}`}
+                      initial={{ width: 0 }}
+                      animate={{ width: `${pos.battery}%` }}
+                      transition={{ type: 'spring', damping: 20, stiffness: 100 }}
+                    />
+                  </div>
+                  <span className={`font-mono text-[10px] w-8 text-right ${pos.battery > 50 ? 'text-emerald-400' : pos.battery > 20 ? 'text-amber-400' : 'text-red-400'}`}>
+                    {pos.battery}%
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 text-[9px]">
+                  <span className="flex items-center gap-0.5">{getStatusBadge(pos.status)}</span>
+                  <span className="flex items-center gap-0.5 text-yellow-600"><Wifi className="w-2 h-2" /> PRI: {pos.priority ?? 'N/A'}</span>
+                  <span className="flex items-center gap-0.5 text-yellow-600"><Shield className="w-2 h-2" /> BAT: {pos.battery}%</span>
+                  <span className="flex items-center gap-0.5 text-yellow-600"><Gauge className="w-2 h-2" /> POS: ({pos.x},{pos.y})</span>
+                </div>
               </div>
-              <div className="flex items-center gap-2 text-[9px] text-yellow-600">
-                <span className="flex items-center gap-0.5"><Wifi className="w-2 h-2" /> PRI: {pos.priority ?? 'N/A'}</span>
-                <span className="flex items-center gap-0.5"><Shield className="w-2 h-2" /> BAT: {pos.battery}%</span>
-                <span className="flex items-center gap-0.5"><Gauge className="w-2 h-2" /> POS: ({pos.x},{pos.y})</span>
-              </div>
-            </div>
-          ))}
-          {Object.keys(robots).length === 0 && (
+            );
+          })}
+          {robotIds.length === 0 && (
             <div className="text-yellow-600 text-[10px] italic text-center py-4">NO TELEMETRY RECEIVED</div>
           )}
         </div>
@@ -410,7 +435,16 @@ export default function App() {
           
           setRobots(prev => ({
             ...prev,
-            [data.agent_id]: { x: data.x, y: data.y, battery: data.battery ?? 100, priority: data.priority }
+            [data.agent_id]: { 
+              x: data.x, 
+              y: data.y, 
+              battery: data.battery ?? 100, 
+              priority: data.priority,
+              status: data.status ?? "ACTIVE",
+              // Preserve existing target if present
+              target_x: prev[data.agent_id]?.target_x,
+              target_y: prev[data.agent_id]?.target_y,
+            }
           }));
         }
       } catch (err) {
@@ -432,6 +466,15 @@ export default function App() {
         const error = await response.json();
         console.error(`Dispatch failed: ${error.detail || response.statusText}`);
       }
+      // Update local state with target for trajectory line
+      setRobots(prev => ({
+        ...prev,
+        [selectedAgent]: {
+          ...prev[selectedAgent],
+          target_x: x,
+          target_y: y,
+        }
+      }));
     } catch (err) {
       console.error("Failed to dispatch command:", err);
     }
