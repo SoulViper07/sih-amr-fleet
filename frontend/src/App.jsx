@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls, Box, Html, Text, RoundedBox } from '@react-three/drei';
+import { OrbitControls, Box, Html, Text, RoundedBox, Line } from '@react-three/drei';
+import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import * as THREE from 'three';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -66,7 +67,8 @@ const AmrMesh = React.memo(({ id, index, targetPosition, battery, priority }) =>
     }
   });
 
-  const color = robotColors[index % robotColors.length];
+  const isMoving = targetPosition && 
+    (Math.abs(pos.x - targetPosition[0]) > 0.01 || Math.abs(pos.z - targetPosition[2]) > 0.01);
 
   return (
     <group ref={meshRef} position={pos}>
@@ -79,13 +81,25 @@ const AmrMesh = React.memo(({ id, index, targetPosition, battery, priority }) =>
         onPointerOut={() => setHovered(false)}
       >
         <meshStandardMaterial 
-          color={color} 
-          metalness={0.3}
-          roughness={0.4}
-          emissive={color}
-          emissiveIntensity={hovered ? 0.3 : 0.1}
+          color="#d97706" 
+          emissive="#f59e0b" 
+          emissiveIntensity={2} 
+          toneMapped={false}
         />
       </Box>
+      {isMoving && (
+        <Line
+          points={[
+            [pos.x, pos.y, pos.z], 
+            [targetPosition[0] - 10, 0.5, targetPosition[1] - 10]
+          ]}
+          color="#10b981"
+          lineWidth={2}
+          dashed
+          dashSize={0.5}
+          gapSize={0.2}
+        />
+      )}
       <Html
         position={[0, 1.2, 0]}
         style={{
@@ -98,7 +112,7 @@ const AmrMesh = React.memo(({ id, index, targetPosition, battery, priority }) =>
           textShadow: '0 0 10px rgba(251, 191, 36, 0.8)',
         }}
       >
-        <div style={{ background: 'rgba(0,0,0,0.7)', padding: '2px 6px', borderRadius: '4px', border: `1px solid ${color}`, display: 'inline-block' }}>
+        <div style={{ background: 'rgba(0,0,0,0.7)', padding: '2px 6px', borderRadius: '4px', border: '1px solid #f59e0b', display: 'inline-block' }}>
           <div>{id}</div>
           <div style={{ fontSize: '10px', opacity: 0.8 }}>{battery}%</div>
         </div>
@@ -108,7 +122,7 @@ const AmrMesh = React.memo(({ id, index, targetPosition, battery, priority }) =>
         position={[0, 0.01, 0]}
         castShadow
       >
-        <meshBasicMaterial color={color} transparent opacity={0.3} />
+        <meshBasicMaterial color="#f59e0b" transparent opacity={0.3} />
       </Box>
     </group>
   );
@@ -133,7 +147,7 @@ const Scene = ({ robots, obstacles, onFloorClick }) => {
       />
       <directionalLight position={[-10, 10, -10]} intensity={0.5} color="#fef3c7" />
       
-      <gridHelper args={[GRID_SIZE, GRID_SIZE, '#78350f', '#451a03']} position={[0, 0, 0]} />
+      <gridHelper args={[GRID_SIZE, GRID_SIZE, '#333333', '#111111']} position={[0, 0, 0]} />
       
       <mesh
         rotation={[-Math.PI / 2, 0, 0]}
@@ -438,13 +452,16 @@ export default function App() {
           camera={{ position: [0, 25, 30], fov: 50 }}
           shadows
           style={{ touchAction: 'none' }}
-          onCreated={({ gl }) => { gl.setClearColor(0x0a0a0a, 1); }}
         >
+          <color attach="background" args={['#050505']} />
           <Scene 
             robots={robots} 
             obstacles={obstacles} 
             onFloorClick={handleFloorClick} 
           />
+          <EffectComposer disableNormalPass>
+            <Bloom luminanceThreshold={1} mipmapBlur intensity={1.5} />
+          </EffectComposer>
           <OrbitControls 
             makeDefault 
             target={[0, 0, 0]}
