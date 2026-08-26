@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls, Box, Html, Line, Plane, Ring, Sphere, Cylinder } from '@react-three/drei';
+import { OrbitControls, Box, Html, Plane, Ring, Sphere, Cylinder } from '@react-three/drei';
 import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import * as THREE from 'three';
 import axios from 'axios';
@@ -209,29 +209,40 @@ const TargetBeacon = React.memo(({ x, y }) => {
 });
 
 /* =========================================================================
-   AMR MESH COMPONENT (Colorized by Telemetry / Auction Status & Hazard Light)
+   AMR MESH COMPONENT (High-performance 60fps useFrame lerp via robotsRef)
    ========================================================================= */
-const AmrMesh = React.memo(({ id, targetPosition, battery, status }) => {
+const AmrMesh = React.memo(({ id, robotsRef }) => {
   const meshRef = useRef();
-  
-  const [pos] = useState(() => {
-    const initialPos = targetPosition && targetPosition.length === 3 && 
-      targetPosition.every(v => typeof v === 'number' && !isNaN(v))
-      ? new THREE.Vector3(targetPosition[0], targetPosition[1], targetPosition[2])
-      : new THREE.Vector3(0, 0, 0);
-    return initialPos;
+  const [visualState, setVisualState] = useState({
+    status: 'ACTIVE',
+    battery: 100,
   });
+  const lastStateRef = useRef({ status: '', battery: 100 });
 
-  useFrame((_, delta) => {
-    if (meshRef.current && targetPosition && Array.isArray(targetPosition) && targetPosition.length === 3) {
-      const target = new THREE.Vector3(targetPosition[0], targetPosition[1], targetPosition[2]);
-      if (!isNaN(target.x) && !isNaN(target.y) && !isNaN(target.z)) {
-        meshRef.current.position.lerp(target, Math.min(1, delta * 8));
-      }
+  useFrame((state, delta) => {
+    const data = robotsRef.current[id];
+    if (!data) return;
+
+    // Construct the target vector
+    const target = new THREE.Vector3(data.x - 10, 0.5, data.y - 10);
+    if (meshRef.current) {
+      // Interpolate smoothly
+      meshRef.current.position.lerp(target, Math.min(1, delta * 10));
+    }
+
+    // Update visual state only when status or battery changes significantly
+    const currentStatus = (data.status || 'ACTIVE').toUpperCase();
+    const currentBattery = data.battery ?? 100;
+    if (
+      lastStateRef.current.status !== currentStatus ||
+      Math.abs(lastStateRef.current.battery - currentBattery) >= 1
+    ) {
+      lastStateRef.current = { status: currentStatus, battery: currentBattery };
+      setVisualState({ status: currentStatus, battery: currentBattery });
     }
   });
 
-  const rawStatus = (status || "ACTIVE").toUpperCase();
+  const rawStatus = (visualState.status || "ACTIVE").toUpperCase();
   const isDead = rawStatus === "DEAD";
   const isBidding = rawStatus === "BIDDING";
   const isClaimed = rawStatus === "CLAIMED";
@@ -284,7 +295,7 @@ const AmrMesh = React.memo(({ id, targetPosition, battery, status }) => {
   }
 
   return (
-    <group ref={meshRef} position={pos}>
+    <group ref={meshRef} position={[0, 0.5, 0]}>
       <Box
         args={[0.7, 0.7, 0.7]}
         position={[0, 0.35, 0]}
@@ -324,7 +335,7 @@ const AmrMesh = React.memo(({ id, targetPosition, battery, status }) => {
       >
         <div style={{ background: isDead ? 'rgba(40,0,0,0.9)' : 'rgba(0,0,0,0.85)', padding: '2px 6px', borderRadius: '4px', border: `1px solid ${borderColor}`, display: 'inline-block' }}>
           <div>{id} <span style={{ fontSize: '9px', opacity: 0.9 }}>[{displayStatus}]</span></div>
-          <div style={{ fontSize: '10px', opacity: 0.85 }}>{battery}%</div>
+          <div style={{ fontSize: '10px', opacity: 0.85 }}>{visualState.battery}%</div>
         </div>
       </Html>
 
@@ -341,9 +352,9 @@ const AmrMesh = React.memo(({ id, targetPosition, battery, status }) => {
 });
 
 /* =========================================================================
-   3D SCENE COMPONENT
+   3D SCENE COMPONENT (Maps over robotIds and passes robotsRef)
    ========================================================================= */
-const Scene = ({ robots, obstacles, chargingStations, targetBeacons, onFloorClick }) => {
+const Scene = ({ robotIds, robotsRef, obstacles, chargingStations, targetBeacons, onFloorClick }) => {
   return (
     <>
       <ambientLight intensity={0.65} color="#fef3c7" />
@@ -390,46 +401,14 @@ const Scene = ({ robots, obstacles, chargingStations, targetBeacons, onFloorClic
         <TargetBeacon key={`beacon-${beacon.id}`} x={beacon.x} y={beacon.y} />
       ))}
 
-      {/* Trajectory lines */}
-      {Object.entries(robots).map(([id, data]) => {
-        const hasTarget = typeof data.target_x === 'number' && typeof data.target_y === 'number';
-        const isMoving = hasTarget && (data.x !== data.target_x || data.y !== data.target_y);
-        if (!isMoving) return null;
-        
-        const startX = data.x - GRID_HALF + 0.5;
-        const startZ = data.y - GRID_HALF + 0.5;
-        const targetX = data.target_x - GRID_HALF + 0.5;
-        const targetZ = data.target_y - GRID_HALF + 0.5;
-        
-        return (
-          <Line
-            key={`path-${id}`}
-            points={[
-              [startX, 0.05, startZ],
-              [targetX, 0.05, targetZ]
-            ]}
-            color={data.status === "CLAIMED" ? "#fbbf24" : data.status === "BIDDING" ? "#22d3ee" : "#eab308"}
-            lineWidth={2}
-            dashed
-            dashSize={0.4}
-            gapSize={0.2}
-          />
-        );
-      })}
-
       {/* AMR Units */}
-      {Object.entries(robots).map(([id, pos]) => {
-        const targetPos = gridToWorld(pos.x, pos.y);
-        return (
-          <AmrMesh
-            key={id}
-            id={id}
-            targetPosition={targetPos}
-            battery={pos.battery}
-            status={pos.status}
-          />
-        );
-      })}
+      {robotIds.map((id) => (
+        <AmrMesh
+          key={id}
+          id={id}
+          robotsRef={robotsRef}
+        />
+      ))}
     </>
   );
 };
@@ -438,6 +417,7 @@ const Scene = ({ robots, obstacles, chargingStations, targetBeacons, onFloorClic
    DASHBOARD PANEL (Edge-AI UI, P2P Terminal, & Sabotage Controls)
    ========================================================================= */
 const DashboardPanel = ({ 
+  robotIds,
   robots, 
   time, 
   isConnected, 
@@ -446,6 +426,7 @@ const DashboardPanel = ({
   logs,
   onSabotage
 }) => {
+
   const getBatteryColor = (level) => {
     if (level > 50) return 'bg-emerald-500';
     if (level > 20) return 'bg-amber-500';
@@ -510,12 +491,12 @@ const DashboardPanel = ({
     );
   };
 
-  const robotIds = Object.keys(robots).sort();
+  const sortedRobotIds = [...robotIds].sort();
 
   // Swarm Status Metrics
-  const biddingCount = robotIds.filter(id => (robots[id]?.status || "").toUpperCase() === "BIDDING").length;
-  const claimedCount = robotIds.filter(id => (robots[id]?.status || "").toUpperCase() === "CLAIMED").length;
-  const dockedCount = robotIds.filter(id => {
+  const biddingCount = sortedRobotIds.filter(id => (robots[id]?.status || "").toUpperCase() === "BIDDING").length;
+  const claimedCount = sortedRobotIds.filter(id => (robots[id]?.status || "").toUpperCase() === "CLAIMED").length;
+  const dockedCount = sortedRobotIds.filter(id => {
     const s = (robots[id]?.status || "").toUpperCase();
     return s === "DOCKED" || s === "IDLE";
   }).length;
@@ -569,7 +550,7 @@ const DashboardPanel = ({
           <span className="text-[9px] text-neutral-400">CLICK FLOOR TO DEPLOY</span>
         </div>
         <div className="grid grid-cols-3 gap-1.5">
-          {robotIds.map((agent) => {
+          {sortedRobotIds.map((agent) => {
             const agentStatus = (robots[agent]?.status || "ACTIVE").toUpperCase();
             return (
               <motion.button
@@ -604,7 +585,7 @@ const DashboardPanel = ({
             <Activity className="w-2.5 h-2.5 text-yellow-500" />
             <span>FLEET</span>
           </div>
-          <div className="text-sm font-bold text-yellow-400">{robotIds.length}</div>
+          <div className="text-sm font-bold text-yellow-400">{sortedRobotIds.length}</div>
         </div>
         <div className="bg-cyan-950/30 border border-cyan-700/40 rounded-lg p-1.5 text-center">
           <div className="text-[8px] text-cyan-400 uppercase">BIDDING</div>
@@ -630,8 +611,8 @@ const DashboardPanel = ({
           <span className="text-[9px] text-yellow-600">SABOTAGE CONTROLS</span>
         </div>
         <div className="space-y-1.5 max-h-[150px] overflow-y-auto custom-scrollbar pr-1">
-          {robotIds.map((id) => {
-            const pos = robots[id];
+          {sortedRobotIds.map((id) => {
+            const pos = robots[id] || {};
             const displayStatus = (pos.status === "IDLE" || !pos.status) ? "DOCKED" : pos.status;
             const isDead = pos.status === "DEAD";
 
@@ -640,7 +621,7 @@ const DashboardPanel = ({
                 <div className="flex items-center justify-between mb-1">
                   <div className="flex items-center gap-1.5">
                     <span className={`font-bold text-xs ${isDead ? 'text-red-400 line-through' : 'text-yellow-400'}`}>{id}</span>
-                    <span className="text-[9px] text-neutral-400">({pos.x}, {pos.y})</span>
+                    <span className="text-[9px] text-neutral-400">({pos.x ?? 0}, {pos.y ?? 0})</span>
                   </div>
                   <div className="flex items-center gap-1.5">
                     {getStatusBadge(displayStatus)}
@@ -664,24 +645,24 @@ const DashboardPanel = ({
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <div className="flex-shrink-0">{getBatteryIcon(pos.battery)}</div>
+                  <div className="flex-shrink-0">{getBatteryIcon(pos.battery ?? 100)}</div>
                   <div className="flex-1 h-1.5 bg-neutral-700 rounded-full overflow-hidden">
                     <motion.div
-                      className={`h-full rounded-full ${getBatteryColor(pos.battery)}`}
+                      className={`h-full rounded-full ${getBatteryColor(pos.battery ?? 100)}`}
                       initial={{ width: 0 }}
-                      animate={{ width: `${pos.battery}%` }}
+                      animate={{ width: `${pos.battery ?? 100}%` }}
                       transition={{ type: 'spring', damping: 20, stiffness: 100 }}
                     />
                   </div>
-                  <span className={`font-mono text-[9px] w-7 text-right ${pos.battery > 50 ? 'text-emerald-400' : pos.battery > 20 ? 'text-amber-400' : 'text-red-400'}`}>
-                    {pos.battery}%
+                  <span className={`font-mono text-[9px] w-7 text-right ${(pos.battery ?? 100) > 50 ? 'text-emerald-400' : (pos.battery ?? 100) > 20 ? 'text-amber-400' : 'text-red-400'}`}>
+                    {pos.battery ?? 100}%
                   </span>
                   <span className="text-[9px] text-neutral-400 font-mono">PRI:{pos.priority ?? 1}</span>
                 </div>
               </div>
             );
           })}
-          {robotIds.length === 0 && (
+          {sortedRobotIds.length === 0 && (
             <div className="text-yellow-600 text-[10px] italic text-center py-2">NO TELEMETRY RECEIVED</div>
           )}
         </div>
@@ -789,10 +770,12 @@ const DashboardPanel = ({
 };
 
 /* =========================================================================
-   MAIN APP COMPONENT
+   MAIN APP COMPONENT (Bypasses React state for 60fps 3D AMR rendering)
    ========================================================================= */
 export default function App() {
-  const [robots, setRobots] = useState({});
+  const robotsRef = useRef({});
+  const [robotIds, setRobotIds] = useState([]);
+  const [telemetryRobots, setTelemetryRobots] = useState({});
   const [time, setTime] = useState(0);
   const [isConnected, setIsConnected] = useState(false);
   const [selectedAgent, setSelectedAgent] = useState('AMR-1');
@@ -834,15 +817,10 @@ export default function App() {
   const handleSabotage = async (agentId) => {
     try {
       await fetch(`http://localhost:8000/api/sabotage/${agentId}`, { method: 'POST' });
-      // Optimistically update robot status to DEAD
-      setRobots(prev => ({
-        ...prev,
-        [agentId]: {
-          ...prev[agentId],
-          status: 'DEAD'
-        }
-      }));
-      // Push sabotage event to logs
+      if (robotsRef.current[agentId]) {
+        robotsRef.current[agentId].status = 'DEAD';
+      }
+      setTelemetryRobots({ ...robotsRef.current });
       setLogs(prev => [{
         id: `${time}-${agentId}-sabotage-${Date.now()}`,
         time: time,
@@ -857,7 +835,7 @@ export default function App() {
     }
   };
 
-  // WebSocket for real-time telemetry & auction bridge
+  // WebSocket for real-time telemetry & auction bridge (ref-based for 60fps)
   useEffect(() => {
     const ws = new WebSocket(WS_URL);
 
@@ -870,6 +848,7 @@ export default function App() {
         const simTime = data.time ?? time;
         if (data.time !== undefined) {
           setTime(data.time);
+          setTelemetryRobots({ ...robotsRef.current });
         }
 
         if (data.agent_id && data.x !== undefined && data.y !== undefined) {
@@ -877,13 +856,25 @@ export default function App() {
           const prevStatus = prev?.status;
           
           let status = data.status ?? "ACTIVE";
-          // Show AMRs as DOCKED when idle
           if (status === "IDLE") {
             status = "DOCKED";
           }
 
-          // Parse and push distinct P2P telemetry auction logs
-          if (status !== prevStatus) {
+          // Update the ref directly without calling state setter for position
+          robotsRef.current[data.agent_id] = {
+            ...prev,
+            ...data,
+            status,
+            battery: data.battery ?? prev?.battery ?? 100,
+            priority: data.priority ?? prev?.priority ?? 1,
+          };
+
+          // Only update setRobotIds if data.agent_id is not already in the array
+          setRobotIds(prevIds => (prevIds.includes(data.agent_id) ? prevIds : [...prevIds, data.agent_id]));
+
+          // Throttle P2P feed logs: Only append to setLogs if data.status !== "MOVING" and data.status !== "IDLE"
+          const rawStatus = (data.status || "").toUpperCase();
+          if (rawStatus !== "MOVING" && rawStatus !== "IDLE" && status !== prevStatus) {
             if (status === "BIDDING") {
               setLogs(prevLogs => [{
                 id: `${simTime}-${data.agent_id}-bid-${Date.now()}`,
@@ -943,19 +934,6 @@ export default function App() {
           }
           
           prevRobotPositions.current[data.agent_id] = { x: data.x, y: data.y, time: simTime, status };
-          
-          setRobots(prev => ({
-            ...prev,
-            [data.agent_id]: { 
-              x: data.x, 
-              y: data.y, 
-              battery: data.battery ?? 100, 
-              priority: data.priority,
-              status: status,
-              target_x: prev[data.agent_id]?.target_x,
-              target_y: prev[data.agent_id]?.target_y,
-            }
-          }));
         }
       } catch (err) {
         console.error("Failed to parse websocket message", err);
@@ -1013,14 +991,10 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ x: clampedX, y: clampedY })
       });
-      setRobots(prev => ({
-        ...prev,
-        [selectedAgent]: {
-          ...prev[selectedAgent],
-          target_x: clampedX,
-          target_y: clampedY,
-        }
-      }));
+      if (robotsRef.current[selectedAgent]) {
+        robotsRef.current[selectedAgent].target_x = clampedX;
+        robotsRef.current[selectedAgent].target_y = clampedY;
+      }
     } catch (dispatchErr) {
       console.error("Dispatch call error:", dispatchErr);
     }
@@ -1036,7 +1010,8 @@ export default function App() {
         >
           <color attach="background" args={['#030712']} />
           <Scene 
-            robots={robots} 
+            robotIds={robotIds} 
+            robotsRef={robotsRef} 
             obstacles={obstacles} 
             chargingStations={chargingStations}
             targetBeacons={targetBeacons}
@@ -1094,7 +1069,8 @@ export default function App() {
       </div>
 
       <DashboardPanel
-        robots={robots}
+        robotIds={robotIds}
+        robots={telemetryRobots}
         time={time}
         isConnected={isConnected}
         selectedAgent={selectedAgent}
