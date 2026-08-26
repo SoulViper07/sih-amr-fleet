@@ -161,7 +161,7 @@ const Scene = ({ robots, obstacles, onFloorClick }) => {
       })}
     </>
   );
-});
+};
 
 const DashboardPanel = ({ 
   robots, 
