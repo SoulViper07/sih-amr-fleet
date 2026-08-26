@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls, Box, Text, Plane, Ring, Sphere, Cylinder } from '@react-three/drei';
+import { OrbitControls, Box, Text, Plane, Ring, Sphere, Cylinder, Billboard } from '@react-three/drei';
 import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import * as THREE from 'three';
 import axios from 'axios';
@@ -68,7 +68,11 @@ const ChargingPad = React.memo(({ x, y }) => {
       <Ring args={[0.08, 0.16, 16]} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
         <meshBasicMaterial color="#67e8f9" transparent opacity={0.95} />
       </Ring>
-      <Text position={[0, 0.1, 0]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.25} color="#67e8f9" anchorX="center" anchorY="middle">DOCK</Text>
+      <Billboard position={[0, 0.8, 0]}>
+        <Text fontSize={0.4} color="#67e8f9" outlineWidth={0.02} outlineColor="#083344" anchorX="center" anchorY="middle">
+          DOCK
+        </Text>
+      </Billboard>
     </group>
   );
 });
@@ -111,7 +115,11 @@ const TargetBeacon = React.memo(({ x, y }) => {
           <meshStandardMaterial color="#fbbf24" emissive="#f59e0b" emissiveIntensity={3.5} toneMapped={false} />
         </Sphere>
       </group>
-      <Text position={[0, 1.6, 0]} fontSize={0.25} color="#fde68a" outlineWidth={0.02} outlineColor="#451a03" anchorX="center" anchorY="middle">{`TARGET (${x}, ${y})`}</Text>
+      <Billboard position={[0, 2.5, 0]}>
+        <Text fontSize={0.5} color="#fde68a" outlineWidth={0.03} outlineColor="#451a03" anchorX="center" anchorY="middle">
+          {`TARGET (${x}, ${y})`}
+        </Text>
+      </Billboard>
     </group>
   );
 });
@@ -180,7 +188,26 @@ const AmrMesh = React.memo(({ id, robotsRef }) => {
         <meshStandardMaterial color={meshColor} emissive={emissiveColor} emissiveIntensity={emissiveIntensity} toneMapped={false} />
       </Box>
       {isDead && <pointLight position={[0, 1, 0]} intensity={5} distance={4} color="#ef4444" />}
-      <Text position={[0, 1.4, 0]} fontSize={0.2} color={textColor} anchorX="center" anchorY="middle" outlineWidth={0.02} outlineColor="#000000">{`${id} [${displayStatus}]\n${visualState.battery}%`}</Text>
+      <Billboard position={[0, 1.8, 0]}>
+        {isBidding && (
+          <Text position={[0, 0.6, 0]} fontSize={0.25} color="#22d3ee" anchorX="center" anchorY="middle" outlineWidth={0.02} outlineColor="#083344">
+            [AI: CALCULATING TRAFFIC COST]
+          </Text>
+        )}
+        {isClaimed && (
+          <Text position={[0, 0.6, 0]} fontSize={0.25} color="#fde047" anchorX="center" anchorY="middle" outlineWidth={0.02} outlineColor="#451a03">
+            [AI: CONTRACT WON]
+          </Text>
+        )}
+        {isYielding && (
+          <Text position={[0, 0.6, 0]} fontSize={0.25} color="#fb923c" anchorX="center" anchorY="middle" outlineWidth={0.02} outlineColor="#431407">
+            [AI: PROXIMITY YIELD]
+          </Text>
+        )}
+        <Text fontSize={0.4} color={textColor} anchorX="center" anchorY="middle" outlineWidth={0.02} outlineColor="#000000">
+          {`${id} [${displayStatus}]\n${visualState.battery}%`}
+        </Text>
+      </Billboard>
       <Box args={[0.5, 0.02, 0.5]} position={[0, 0.01, 0]} castShadow>
         <meshBasicMaterial color={emissiveColor} transparent opacity={isDead ? 0.6 : 0.4} />
       </Box>
@@ -200,6 +227,53 @@ const Scene = ({ robotIds, robotsRef, obstacles, chargingStations, targetBeacons
       />
       <directionalLight position={[-12, 15, -12]} intensity={0.6} color="#93c5fd" />
       <gridHelper args={[GRID_SIZE, GRID_SIZE, '#475569', '#1e293b']} position={[0, 0, 0]} />
+      
+      {/* Industrial Transport Floors / Corridors */}
+      <group position={[0, 0.005, 0]}>
+        {[
+          { x: -13, width: 3.8 },
+          { x: -7,  width: 3.8 },
+          { x: -1,  width: 3.8 },
+          { x: 5,   width: 3.8 },
+          { x: 12,  width: 5.8 }
+        ].map((aisle, i) => (
+          <Plane key={`v-aisle-${i}`} args={[aisle.width, 29.8]} position={[aisle.x, 0, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+            <meshStandardMaterial 
+              color="#0f2938" 
+              emissive="#083344" 
+              emissiveIntensity={0.6} 
+              transparent 
+              opacity={0.55} 
+              roughness={0.4} 
+              metalness={0.6} 
+            />
+          </Plane>
+        ))}
+
+        <Plane args={[29.8, 5.8]} position={[0, 0.001, -12]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+          <meshStandardMaterial 
+            color="#062e24" 
+            emissive="#064e3b" 
+            emissiveIntensity={0.5} 
+            transparent 
+            opacity={0.5} 
+            roughness={0.4} 
+            metalness={0.5} 
+          />
+        </Plane>
+        <Plane args={[29.8, 4.8]} position={[0, 0.001, 12.5]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+          <meshStandardMaterial 
+            color="#062e24" 
+            emissive="#064e3b" 
+            emissiveIntensity={0.5} 
+            transparent 
+            opacity={0.5} 
+            roughness={0.4} 
+            metalness={0.5} 
+          />
+        </Plane>
+      </group>
+
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} onPointerDown={onFloorClick}>
         <planeGeometry args={[GRID_SIZE, GRID_SIZE]} />
         <meshBasicMaterial transparent opacity={0} />
