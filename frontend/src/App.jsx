@@ -70,6 +70,9 @@ const AmrMesh = React.memo(({ id, index, targetPosition, battery, priority }) =>
   const isMoving = targetPosition && 
     (Math.abs(pos.x - targetPosition[0]) > 0.01 || Math.abs(pos.z - targetPosition[2]) > 0.01);
 
+  const targetX = targetPosition ? targetPosition[0] - 10 : 0;
+  const targetZ = targetPosition ? targetPosition[1] - 10 : 0;
+
   return (
     <group ref={meshRef} position={pos}>
       <Box
@@ -90,8 +93,8 @@ const AmrMesh = React.memo(({ id, index, targetPosition, battery, priority }) =>
       {isMoving && (
         <Line
           points={[
-            [pos.x, pos.y, pos.z], 
-            [targetPosition[0] - 10, 0.5, targetPosition[1] - 10]
+            [0, -0.4, 0], 
+            [targetX - pos.x, -0.4, targetZ - pos.z]
           ]}
           color="#10b981"
           lineWidth={2}
@@ -215,57 +218,57 @@ const DashboardPanel = ({
 
   return (
     <motion.div
-      className="w-full h-full flex flex-col bg-neutral-900 border-l border-yellow-700/30 p-6 overflow-hidden"
+      className="w-1/4 h-full flex flex-col p-4 bg-neutral-900 border-l border-yellow-700/30"
       initial={{ x: '100%', opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}
       transition={{ type: 'spring', damping: 20, stiffness: 100, delay: 0.2 }}
     >
       {/* Header */}
-      <div className="flex items-center justify-between mb-6 border-b border-yellow-700/20 pb-4">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-yellow-700/20 rounded-lg border border-yellow-700/30">
-            <Radio className="w-5 h-5 text-yellow-500" />
+      <div className="flex items-center justify-between mb-4 border-b border-yellow-700/20 pb-3">
+        <div className="flex items-center gap-2">
+          <div className="p-1.5 bg-yellow-700/20 rounded-lg border border-yellow-700/30">
+            <Radio className="w-4 h-4 text-yellow-500" />
           </div>
           <div>
             <motion.h1
-              className="text-xl font-bold tracking-tight text-yellow-300"
+              className="text-lg font-bold tracking-tight text-yellow-300"
               initial={{ opacity: 0, y: -20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.5 }}
             >
               EDGE-AI FLEET
             </motion.h1>
-            <p className="text-xs text-yellow-600 uppercase tracking-widest">COORDINATION SYSTEM</p>
+            <p className="text-[10px] text-yellow-600 uppercase tracking-widest">COORDINATION SYSTEM</p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 bg-neutral-800 px-3 py-1.5 rounded-lg border border-yellow-700/30">
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 bg-neutral-800 px-2 py-1 rounded-lg border border-yellow-700/30">
             <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'}`}></div>
-            <span className={`text-xs font-medium ${isConnected ? 'text-yellow-400' : 'text-red-500'}`}>
+            <span className={`text-[10px] font-medium ${isConnected ? 'text-yellow-400' : 'text-red-500'}`}>
               {isConnected ? 'LINK' : 'DOWN'}
             </span>
           </div>
-          <div className="flex items-center gap-1.5 bg-neutral-800 px-3 py-1.5 rounded-lg border border-yellow-700/30">
-            <Clock className="w-3.5 h-3.5 text-yellow-600" />
-            <span className="text-lg font-mono tabular-nums text-yellow-400">T+{String(time).padStart(3, '0')}</span>
+          <div className="flex items-center gap-1 bg-neutral-800 px-2 py-1 rounded-lg border border-yellow-700/30">
+            <Clock className="w-3 h-3 text-yellow-600" />
+            <span className="text-base font-mono tabular-nums text-yellow-400">T+{String(time).padStart(3, '0')}</span>
           </div>
         </div>
       </div>
 
       {/* Commander Controls */}
-      <div className="mb-4 bg-neutral-800/50 rounded-lg border border-yellow-700/20 p-4">
-        <div className="flex items-center gap-2 mb-3">
-          <Target className="w-4 h-4 text-yellow-500" />
-          <h3 className="font-semibold text-yellow-300 text-sm">COMMANDER CONTROLS</h3>
+      <div className="mb-3 bg-neutral-800/50 rounded-lg border border-yellow-700/20 p-3">
+        <div className="flex items-center gap-1.5 mb-2">
+          <Target className="w-3.5 h-3.5 text-yellow-500" />
+          <h3 className="font-semibold text-yellow-300 text-xs">COMMANDER CONTROLS</h3>
         </div>
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-2 gap-1.5">
           {['AMR-1', 'AMR-2', 'AMR-3', 'AMR-4'].map((agent) => (
             <motion.button
               key={agent}
               onClick={() => setSelectedAgent(agent)}
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
-              className={`px-3 py-2 rounded font-medium text-xs uppercase tracking-wide transition-all text-neutral-300 ${
+              className={`px-2 py-1.5 rounded font-medium text-[10px] uppercase tracking-wide transition-all text-neutral-300 ${
                 selectedAgent === agent
                   ? 'bg-yellow-600/20 border-2 border-yellow-500 text-yellow-300 shadow-[0_0_10px_rgba(234,179,8,0.3)]'
                   : 'bg-neutral-900 border border-neutral-700 hover:border-yellow-700/50 hover:bg-neutral-800'
@@ -278,32 +281,32 @@ const DashboardPanel = ({
       </div>
 
       {/* Active Fleet Metric */}
-      <div className="mb-4 bg-neutral-800/50 rounded-lg border border-yellow-700/20 p-4">
-        <div className="flex items-center gap-2 mb-2">
-          <Activity className="w-4 h-4 text-yellow-500" />
-          <h3 className="font-semibold text-yellow-300 text-sm">ACTIVE FLEET</h3>
+      <div className="mb-3 bg-neutral-800/50 rounded-lg border border-yellow-700/20 p-3">
+        <div className="flex items-center gap-1.5 mb-1.5">
+          <Activity className="w-3.5 h-3.5 text-yellow-500" />
+          <h3 className="font-semibold text-yellow-300 text-xs">ACTIVE FLEET</h3>
         </div>
-        <div className="flex items-baseline gap-2">
-          <span className="text-3xl font-bold text-yellow-400 tabular-nums">{Object.keys(robots).length}</span>
-          <span className="text-xs text-yellow-600">/ 4 UNITS</span>
+        <div className="flex items-baseline gap-1.5">
+          <span className="text-2xl font-bold text-yellow-400 tabular-nums">{Object.keys(robots).length}</span>
+          <span className="text-[10px] text-yellow-600">/ 4 UNITS</span>
         </div>
-        <p className="text-xs text-yellow-600 mt-1">DECENTRALIZED NODES</p>
+        <p className="text-[10px] text-yellow-600 mt-0.5">DECENTRALIZED NODES</p>
       </div>
 
       {/* Live Telemetry */}
-      <div className="mb-4 bg-neutral-800/50 rounded-lg border border-yellow-700/20 p-4 flex-shrink-0">
-        <div className="flex items-center gap-2 mb-3">
-          <Cpu className="w-4 h-4 text-yellow-500" />
-          <h3 className="font-semibold text-yellow-300 text-sm">LIVE TELEMETRY</h3>
+      <div className="mb-3 bg-neutral-800/50 rounded-lg border border-yellow-700/20 p-3 flex-shrink-0">
+        <div className="flex items-center gap-1.5 mb-2">
+          <Cpu className="w-3.5 h-3.5 text-yellow-500" />
+          <h3 className="font-semibold text-yellow-300 text-xs">LIVE TELEMETRY</h3>
         </div>
-        <div className="space-y-2 max-h-[200px] overflow-y-auto">
+        <div className="space-y-1.5 max-h-[180px] overflow-y-auto">
           {Object.entries(robots).map(([id, pos]) => (
-            <div key={id} className="bg-neutral-900 rounded border border-neutral-700 p-3">
-              <div className="flex items-center justify-between mb-2">
-                <span className="font-medium text-yellow-400 text-sm">{id}</span>
-                <span className="text-xs text-yellow-600">({pos.x}, {pos.y})</span>
+            <div key={id} className="bg-neutral-900 rounded border border-neutral-700 p-2.5">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="font-medium text-yellow-400 text-xs">{id}</span>
+                <span className="text-[10px] text-yellow-600">({pos.x}, {pos.y})</span>
               </div>
-              <div className="flex items-center gap-2 mb-2">
+              <div className="flex items-center gap-1.5 mb-1.5">
                 <div className="flex-shrink-0">{getBatteryIcon(pos.battery)}</div>
                 <div className="flex-1 h-1.5 bg-neutral-700 rounded-full overflow-hidden">
                   <motion.div
@@ -313,31 +316,31 @@ const DashboardPanel = ({
                     transition={{ type: 'spring', damping: 20, stiffness: 100 }}
                   />
                 </div>
-                <span className={`font-mono text-xs w-10 text-right ${pos.battery > 50 ? 'text-emerald-400' : pos.battery > 20 ? 'text-amber-400' : 'text-red-400'}`}>
+                <span className={`font-mono text-[10px] w-8 text-right ${pos.battery > 50 ? 'text-emerald-400' : pos.battery > 20 ? 'text-amber-400' : 'text-red-400'}`}>
                   {pos.battery}%
                 </span>
               </div>
-              <div className="flex items-center gap-3 text-[10px] text-yellow-600">
-                <span className="flex items-center gap-1"><Wifi className="w-2.5 h-2.5" /> PRI: {pos.priority ?? 'N/A'}</span>
-                <span className="flex items-center gap-1"><Shield className="w-2.5 h-2.5" /> BAT: {pos.battery}%</span>
-                <span className="flex items-center gap-1"><Gauge className="w-2.5 h-2.5" /> POS: ({pos.x},{pos.y})</span>
+              <div className="flex items-center gap-2 text-[9px] text-yellow-600">
+                <span className="flex items-center gap-0.5"><Wifi className="w-2 h-2" /> PRI: {pos.priority ?? 'N/A'}</span>
+                <span className="flex items-center gap-0.5"><Shield className="w-2 h-2" /> BAT: {pos.battery}%</span>
+                <span className="flex items-center gap-0.5"><Gauge className="w-2 h-2" /> POS: ({pos.x},{pos.y})</span>
               </div>
             </div>
           ))}
           {Object.keys(robots).length === 0 && (
-            <div className="text-yellow-600 text-xs italic text-center py-8">NO TELEMETRY RECEIVED</div>
+            <div className="text-yellow-600 text-[10px] italic text-center py-4">NO TELEMETRY RECEIVED</div>
           )}
         </div>
       </div>
 
       {/* P2P Network Feed - takes remaining space */}
-      <div className="flex-1 min-h-0 bg-neutral-800/50 rounded-lg border border-yellow-700/20 p-4 overflow-y-auto custom-scrollbar">
-        <div className="flex items-center gap-2 mb-3">
-          <Terminal className="w-4 h-4 text-yellow-500" />
-          <h3 className="font-semibold text-yellow-300 text-sm">P2P NETWORK FEED</h3>
-          <span className="ml-auto text-[10px] bg-yellow-700/20 text-yellow-500 px-1.5 py-0.5 rounded">ENCRYPTED</span>
+      <div className="flex-1 min-h-0 overflow-y-auto mt-4 bg-black p-3 border border-yellow-700/50 rounded">
+        <div className="flex items-center gap-1.5 mb-2">
+          <Terminal className="w-3.5 h-3.5 text-yellow-500" />
+          <h3 className="font-semibold text-yellow-300 text-xs">P2P NETWORK FEED</h3>
+          <span className="ml-auto text-[9px] bg-yellow-700/20 text-yellow-500 px-1.5 py-0.5 rounded">ENCRYPTED</span>
         </div>
-        <div className="text-xs text-neutral-300 leading-relaxed font-mono">
+        <div className="text-[10px] text-neutral-300 leading-relaxed font-mono">
           {logs.length === 0 ? (
             <div className="text-neutral-500 italic">AWAITING YIELD EVENTS...</div>
           ) : (
@@ -345,11 +348,11 @@ const DashboardPanel = ({
             {logs.map((log, index) => (
               <motion.div 
                 key={index}
-                initial={{ opacity: 0, y: -20, scale: 0.95 }}
+                initial={{ opacity: 0, y: -10, scale: 0.95 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.9 }}
                 transition={{ duration: 0.3 }}
-                className="mb-2 text-yellow-100/80 font-mono text-sm"
+                className="mb-1.5 text-yellow-100/80 font-mono text-[10px]"
               >
                 {log}
               </motion.div>
@@ -447,7 +450,7 @@ export default function App() {
 
   return (
     <div className="h-screen w-screen overflow-hidden bg-neutral-950 text-amber-50 flex">
-      <div className="w-2/3 h-full relative">
+      <div className="w-3/4 h-full relative">
         <Canvas
           camera={{ position: [0, 25, 30], fov: 50 }}
           shadows
