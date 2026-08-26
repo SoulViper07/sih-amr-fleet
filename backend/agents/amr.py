@@ -50,6 +50,7 @@ class AMRAgent:
         self.battery = 100.0
         self.status = "ACTIVE"
         self.last_sabotage_check = 0.0
+        self.yield_cooldown = 0.0
 
         # MQTT client setup
         self.client = mqtt.Client(client_id=agent_id, clean_session=True)
@@ -156,14 +157,40 @@ class AMRAgent:
 
         # Check for conflicts with our current path
         if self._check_conflict(peer_path):
-            # Resolve conflict: lower priority yields. If equal, higher agent_id yields.
-            if self.priority < sender_priority or (self.priority == sender_priority and self.agent_id > sender_id):
-                logger.warning(
-                    f"Agent {self.agent_id}: Conflict detected with {sender_id} (priority {sender_priority}). "
-                    f"Yielding and replanning."
-                )
-                if self.current_goal:
-                    self.plan_to_goal(*self.current_goal)
+            # Strict priority enforcement: ONLY lower priority yields
+            # If priorities equal, use agent_id as tiebreaker (lower id = higher priority)
+            should_yield = False
+            if self.priority < sender_priority:
+                should_yield = True
+            elif self.priority == sender_priority and self.agent_id > sender_id:
+                should_yield = True
+
+            if should_yield:
+                current_time = time.time()
+                # Only yield if not in cooldown
+                if current_time >= self.yield_cooldown:
+                    self.yield_cooldown = current_time + 3.0  # 3 second cooldown
+                    self.status = "YIELDING"
+                    
+                    # Add higher-priority robot's current position as dynamic obstacle
+                    # so A* routes around it
+                    if path:
+                        first_node = path[0]
+                        if isinstance(first_node, list) and len(first_node) >= 2:
+                            other_x, other_y = first_node[0], first_node[1]
+                            self.dynamic_obstacles.add((other_x, other_y))
+                    
+                    logger.warning(
+                        f"Agent {self.agent_id} (pri={self.priority}): Conflict with {sender_id} "
+                        f"(pri={sender_priority}). YIELDING for 3s. Added ({other_x}, {other_y}) as obstacle."
+                    )
+                    
+                    if self.current_goal:
+                        self.plan_to_goal(*self.current_goal)
+            else:
+                # Higher priority robot ignores conflict and continues
+                logger.debug(f"Agent {self.agent_id} (pri={self.priority}): Conflict with {sender_id} "
+                            f"(pri={sender_priority}). HIGHER PRIORITY - ignoring.")
 
     def _check_conflict(self, peer_path: list[State]) -> bool:
         """Check for vertex collision between peer path and our current path.
@@ -208,6 +235,10 @@ class AMRAgent:
                     self.status = "DEAD"
             except Exception:
                 pass
+
+        # Handle yield cooldown - if cooldown expired, resume ACTIVE status
+        if self.status == "YIELDING" and current_time >= self.yield_cooldown:
+            self.status = "ACTIVE"
 
         # Track previous position to detect movement
         prev_pos = self.current_pos

@@ -163,7 +163,7 @@ const Scene = ({ robots, obstacles, onFloorClick }) => {
 
       {/* Trajectory lines in world space - rendered once per robot */}
       {Object.entries(robots).map(([id, data]) => {
-        const hasTarget = data.target_x !== undefined && data.target_y !== undefined;
+        const hasTarget = typeof data.target_x === 'number' && typeof data.target_y === 'number';
         const isMoving = hasTarget && (data.x !== data.target_x || data.y !== data.target_y);
         if (!isMoving) return null;
         
@@ -399,6 +399,7 @@ export default function App() {
   const [obstacles, setObstacles] = useState([]);
   const [logs, setLogs] = useState([]);
   const prevRobotPositions = useRef({});
+  const activeYields = useRef(new Set());
 
   useEffect(() => {
     fetch(`${API_URL}/api/config`)
@@ -424,13 +425,21 @@ export default function App() {
         }
         if (data.agent_id && data.x !== undefined && data.y !== undefined) {
           const prev = prevRobotPositions.current[data.agent_id];
-          if (prev && prev.x === data.x && prev.y === data.y && prev.time !== data.time) {
+          
+          // Throttle yield logs - only log when robot BEGINS yielding
+          const status = data.status ?? "ACTIVE";
+          if (status === "YIELDING" && !activeYields.current.has(data.agent_id)) {
+            activeYields.current.add(data.agent_id);
             setLogs(prevLogs => {
               const newLog = `[${data.time}] ${data.agent_id} (Pri ${data.priority}) yielding right-of-way.`;
               const updated = [newLog, ...prevLogs].slice(0, 12);
               return updated;
             });
+          } else if ((status === "ACTIVE" || status === "MOVING" || status === "IDLE") && activeYields.current.has(data.agent_id)) {
+            // Robot stopped yielding - remove from active yields
+            activeYields.current.delete(data.agent_id);
           }
+          
           prevRobotPositions.current[data.agent_id] = { x: data.x, y: data.y, time: data.time };
           
           setRobots(prev => ({
@@ -440,7 +449,7 @@ export default function App() {
               y: data.y, 
               battery: data.battery ?? 100, 
               priority: data.priority,
-              status: data.status ?? "ACTIVE",
+              status: status,
               // Preserve existing target if present
               target_x: prev[data.agent_id]?.target_x,
               target_y: prev[data.agent_id]?.target_y,
