@@ -54,6 +54,7 @@ class AMRAgent:
         self.yield_cooldown = 0.0
         self.last_replan_time = 0.0
         self.last_move_time = 0.0
+        self.yield_ticks = 0
 
         # Edge-AI bidding state
         self.bid_cost: float | None = None
@@ -377,8 +378,26 @@ class AMRAgent:
                 
                 if conflict:
                     self.status = "YIELDING"
+                    self.yield_ticks += 1
+                    if self.yield_ticks > 3 and blocking_peer_id:
+                        # 1. Flag the VIP bot as a solid brick wall
+                        blocker_pos = self.peer_positions[blocking_peer_id].get("pos") if blocking_peer_id in self.peer_positions else None
+                        if blocker_pos:
+                            self.dynamic_obstacles.add(blocker_pos)
+                        
+                        # 2. Force replan (A* will now route AROUND the VIP bot)
+                        if self.current_goal:
+                            self.plan_to_goal(*self.current_goal)
+                        
+                        # 3. Remove the temporary wall so the map isn't permanently broken
+                        if blocker_pos:
+                            self.dynamic_obstacles.discard(blocker_pos)
+                            
+                        self.yield_ticks = 0
+                        self.last_replan_time = time.time()  # Prevent immediate auto-recovery loop
                 else:
                     self.status = "MOVING"
+                    self.yield_ticks = 0
                     self.current_path.pop(0)  # Consume the step
                     self.current_pos = next_pos
                     
@@ -406,7 +425,10 @@ class AMRAgent:
 
         # Auto-recovery: Force replan if stuck midway
         if self.status != "DEAD" and self.current_goal and not self.current_path:
-            self.plan_to_goal(*self.current_goal)
+            # Auto-recovery: Only force replan if we haven't just tried in the last 2 seconds
+            if time.time() - getattr(self, "last_replan_time", 0) > 2.0:
+                self.plan_to_goal(*self.current_goal)
+                self.last_replan_time = time.time()
 
         # Publish telemetry with status, intended next position, and next_pos
         next_step_pos = (self.current_path[0][0], self.current_path[0][1]) if self.current_path else self.current_pos

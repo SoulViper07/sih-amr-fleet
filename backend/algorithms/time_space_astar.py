@@ -17,7 +17,7 @@ def time_space_astar(
     static_obstacles: set[Coord],
     dynamic_reservations: dict[int, set[Coord]],
     max_time: int = 100,
-    max_iterations: int = 1000,
+    max_iterations: int = 5000,
 ) -> list[State] | None:
     """Find a time-space path from start to goal avoiding static and dynamic obstacles.
 
