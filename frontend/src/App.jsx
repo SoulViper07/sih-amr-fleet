@@ -12,8 +12,8 @@ console.warn = (...args) => {
   originalWarn(...args);
 };
 
-const WS_URL = 'ws://localhost:8000/ws';
-const API_URL = 'http://localhost:8000';
+const WS_URL = import.meta.env.VITE_WS_URL || "ws://localhost:8000/ws";
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 const GRID_SIZE = 30;
 const GRID_HALF = GRID_SIZE / 2;
 
@@ -510,7 +510,7 @@ export default function App() {
 
   const handleSabotage = async (agentId) => {
     try {
-      await fetch(`http://localhost:8000/api/sabotage/${agentId}`, { method: 'POST' });
+      await fetch(`${API_URL}/api/sabotage/${agentId}`, { method: 'POST' });
       if (robotsRef.current[agentId]) robotsRef.current[agentId].status = 'DEAD';
       setTelemetryRobots({ ...robotsRef.current });
       setLogs(prev => [{ id: `${Date.now()}-${agentId}-sabotage`, time: robotsRef.current[agentId]?.time ?? 0, agentId: agentId, status: "DEAD", type: "FAILURE", message: `[SABOTAGE] ⚠️ Manual override: ${agentId} neutralized -> Dynamic obstacle active on grid`, color: "red" }, ...prev].slice(0, 25));
@@ -603,7 +603,7 @@ export default function App() {
     setTargetBeacons(prev => [...prev.filter(b => Date.now() - b.id < 5000), { x: clampedX, y: clampedY, id: beaconId }]);
     setLogs(prev => [{ id: `${beaconId}-dispatch`, time: time, agentId: selectedAgent, status: "DISPATCH", type: "DISPATCH", message: `[OPERATOR] Dispatched task target @ (${clampedX}, ${clampedY})`, color: "purple" }, ...prev].slice(0, 25));
 
-    try { await axios.post('http://localhost:8000/api/tasks', { x: clampedX, y: clampedY }); } catch { /* ignore */ }
+    try { await axios.post(`${API_URL}/api/tasks`, { x: clampedX, y: clampedY }); } catch { /* ignore */ }
     try {
       await fetch(`${API_URL}/api/dispatch/${selectedAgent}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ x: clampedX, y: clampedY }) });
       if (robotsRef.current[selectedAgent]) {
