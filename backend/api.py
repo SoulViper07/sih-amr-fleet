@@ -98,7 +98,9 @@ async def broadcast_mqtt_to_ws() -> None:
 @app.on_event("startup")
 async def startup_event() -> None:
     """Initialize MQTT client and start background broadcast task."""
-    global mqtt_client
+    global mqtt_client, SABOTAGED_AGENTS, PENDING_TASKS
+    SABOTAGED_AGENTS.clear()
+    PENDING_TASKS.clear()
 
     mqtt_client = mqtt.Client(client_id="fastapi-bridge", clean_session=True)
     mqtt_client.on_message = on_mqtt_message
