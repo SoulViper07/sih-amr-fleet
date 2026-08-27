@@ -28,7 +28,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-BROKER = "localhost"
+BROKER = "broker.emqx.io"
 PORT = 1883
 GRID_SIZE = (30, 30)
 

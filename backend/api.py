@@ -49,7 +49,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-BROKER = "localhost"
+BROKER = "broker.emqx.io"
 PORT = 1883
 
 active_websockets: list[WebSocket] = []
