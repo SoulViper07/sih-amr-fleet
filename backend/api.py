@@ -24,7 +24,7 @@ WAREHOUSE_CONFIG = {
         "rack_3": [(x, y) for x in range(16, 18) for y in range(6, 25)],
         "rack_4": [(x, y) for x in range(22, 24) for y in range(6, 25)],
     },
-    "charging_stations": [(2, 0), (7, 0), (12, 0), (17, 0), (22, 0), (27, 0)],
+    "charging_stations": [(0, 0), (0, 29), (29, 0), (29, 29), (14, 0), (14, 29)],
     "workstations": [(2, 29), (14, 29), (27, 29)],
 }
 

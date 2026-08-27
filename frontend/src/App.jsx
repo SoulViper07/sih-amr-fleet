@@ -17,9 +17,10 @@ const API_URL = 'http://localhost:8000';
 const GRID_SIZE = 30;
 const GRID_HALF = GRID_SIZE / 2;
 
-const DEFAULT_CHARGING_STATIONS = [
-  [2, 0], [7, 0], [12, 0], [17, 0], [22, 0], [27, 0]
+const CHARGING_STATIONS = [
+  [0, 0], [0, 29], [29, 0], [29, 29], [14, 0], [14, 29]
 ];
+const DEFAULT_CHARGING_STATIONS = CHARGING_STATIONS;
 
 function gridToWorld(x, y) {
   return [x - GRID_HALF + 0.5, 0.5, y - GRID_HALF + 0.5];
@@ -63,7 +64,7 @@ const ChargingPad = React.memo(({ x, y }) => {
   });
 
   return (
-    <group position={[wx, 0, wz - 1]}>
+    <group position={[wx, 0, wz]}>
       <Plane args={[0.85, 0.85]} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
         <meshStandardMaterial color="#06b6d4" emissive="#22d3ee" emissiveIntensity={2.5} toneMapped={false} transparent opacity={0.85} />
       </Plane>
