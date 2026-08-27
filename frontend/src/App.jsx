@@ -167,12 +167,13 @@ const AmrMesh = React.memo(({ id, robotsRef }) => {
   const isDead = rawStatus === "DEAD";
   const isBidding = rawStatus === "BIDDING";
   const isClaimed = rawStatus === "CLAIMED";
+  const isRunning = rawStatus === "RUNNING" || rawStatus === "MOVING";
   const isDocked = rawStatus === "DOCKED" || rawStatus === "IDLE";
   const isYielding = rawStatus === "YIELDING";
 
-  let emissiveColor = "#f59e0b";
-  let textColor = "#fde68a";
-  let displayStatus = rawStatus === "IDLE" ? "DOCKED" : rawStatus;
+  let emissiveColor = "#10b981";
+  let textColor = "#a7f3d0";
+  let displayStatus = rawStatus === "IDLE" ? "DOCKED" : (rawStatus === "MOVING" ? "RUNNING" : rawStatus);
 
   if (isDead) {
     emissiveColor = "#ef4444"; textColor = "#fca5a5";
@@ -180,10 +181,14 @@ const AmrMesh = React.memo(({ id, robotsRef }) => {
     emissiveColor = "#06b6d4"; textColor = "#a5f3fc";
   } else if (isClaimed) {
     emissiveColor = "#eab308"; textColor = "#fef08a";
-  } else if (isDocked) {
-    emissiveColor = "#38bdf8"; textColor = "#bae6fd";
   } else if (isYielding) {
     emissiveColor = "#ea580c"; textColor = "#fed7aa";
+  } else if (isDocked) {
+    emissiveColor = "#38bdf8"; textColor = "#bae6fd";
+  } else if (rawStatus === "ACTIVE") {
+    emissiveColor = "#f59e0b"; textColor = "#fde68a";
+  } else if (isRunning) {
+    emissiveColor = "#10b981"; textColor = "#a7f3d0";
   }
 
   return (
@@ -340,9 +345,10 @@ const DashboardPanel = ({ robotIds, robots, time, isConnected, selectedAgent, se
     if (s === "DEAD") return (<span className="px-1.5 py-0.5 text-[9px] font-bold bg-red-950/70 text-red-400 border border-red-700/60 rounded shadow-[0_0_8px_rgba(239,68,68,0.3)] flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />DEAD</span>);
     if (s === "BIDDING") return (<span className="px-1.5 py-0.5 text-[9px] font-bold bg-cyan-950/80 text-cyan-300 border border-cyan-500/70 rounded shadow-[0_0_8px_rgba(6,182,212,0.5)] flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />BIDDING</span>);
     if (s === "CLAIMED") return (<span className="px-1.5 py-0.5 text-[9px] font-bold bg-yellow-950/80 text-yellow-300 border border-yellow-500/70 rounded shadow-[0_0_8px_rgba(234,179,8,0.5)] flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse" />CLAIMED</span>);
-    if (s === "DOCKED" || s === "IDLE") return (<span className="px-1.5 py-0.5 text-[9px] font-bold bg-sky-950/70 text-sky-300 border border-sky-600/60 rounded shadow-[0_0_8px_rgba(14,165,233,0.3)] flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-sky-400" />DOCKED</span>);
+    if (s === "RUNNING" || s === "MOVING") return (<span className="px-1.5 py-0.5 text-[9px] font-bold bg-emerald-950/70 text-emerald-400 border border-emerald-600/60 rounded shadow-[0_0_8px_rgba(16,185,129,0.3)] flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />RUNNING</span>);
     if (s === "YIELDING") return (<span className="px-1.5 py-0.5 text-[9px] font-bold bg-amber-950/70 text-amber-400 border border-amber-600/60 rounded shadow-[0_0_8px_rgba(245,158,11,0.3)] flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-bounce" />YIELDING</span>);
-    return (<span className="px-1.5 py-0.5 text-[9px] font-bold bg-emerald-950/70 text-emerald-400 border border-emerald-600/60 rounded shadow-[0_0_8px_rgba(16,185,129,0.3)] flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />ACTIVE</span>);
+    if (s === "DOCKED" || s === "IDLE") return (<span className="px-1.5 py-0.5 text-[9px] font-bold bg-sky-950/70 text-sky-300 border border-sky-600/60 rounded shadow-[0_0_8px_rgba(14,165,233,0.3)] flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-sky-400" />DOCKED</span>);
+    return (<span className="px-1.5 py-0.5 text-[9px] font-bold bg-amber-950/50 text-amber-300 border border-amber-600/50 rounded shadow-[0_0_8px_rgba(245,158,11,0.2)] flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-amber-400" />ACTIVE</span>);
   };
 
   const sortedRobotIds = [...robotIds].sort();
@@ -377,7 +383,7 @@ const DashboardPanel = ({ robotIds, robots, time, isConnected, selectedAgent, se
             return (
               <motion.button key={agent} onClick={() => setSelectedAgent(agent)} whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} className={`px-2 py-1 rounded font-medium text-[10px] uppercase tracking-wide transition-all flex items-center justify-between ${selectedAgent === agent ? 'bg-[#d4af37]/25 border border-[#d4af37] text-[#fffff0] shadow-[0_0_10px_rgba(212,175,55,0.3)]' : 'bg-[#1a1311] border border-[#d4af37]/20 text-[#f5f5dc] hover:border-[#d4af37]/50 hover:bg-[#251b18]'}`}>
                 <span>{agent}</span>
-                <span className={`w-1.5 h-1.5 rounded-full ${agentStatus === "BIDDING" ? 'bg-cyan-400' : agentStatus === "CLAIMED" ? 'bg-yellow-400' : agentStatus === "DOCKED" || agentStatus === "IDLE" ? 'bg-sky-400' : agentStatus === "DEAD" ? 'bg-red-500' : agentStatus === "YIELDING" ? 'bg-orange-500' : 'bg-emerald-400'}`} />
+                <span className={`w-1.5 h-1.5 rounded-full ${agentStatus === "BIDDING" ? 'bg-cyan-400' : agentStatus === "CLAIMED" ? 'bg-yellow-400' : agentStatus === "RUNNING" || agentStatus === "MOVING" ? 'bg-emerald-400' : agentStatus === "DOCKED" || agentStatus === "IDLE" ? 'bg-sky-400' : agentStatus === "DEAD" ? 'bg-red-500' : agentStatus === "YIELDING" ? 'bg-orange-500' : 'bg-amber-400'}`} />
               </motion.button>
             );
           })}
@@ -392,7 +398,7 @@ const DashboardPanel = ({ robotIds, robots, time, isConnected, selectedAgent, se
         <div className="space-y-1.5 max-h-[150px] overflow-y-auto custom-scrollbar pr-1">
           {sortedRobotIds.map((id) => {
             const pos = robots[id] || {};
-            const displayStatus = (pos.status === "IDLE" || !pos.status) ? "DOCKED" : pos.status;
+            const displayStatus = (pos.status === "IDLE" || !pos.status) ? "DOCKED" : (pos.status === "MOVING" ? "RUNNING" : pos.status);
             const isDead = pos.status === "DEAD";
 
             return (
