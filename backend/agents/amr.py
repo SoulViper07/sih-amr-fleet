@@ -133,16 +133,17 @@ class AMRAgent:
         if x is None or y is None:
             return
 
-        inp = payload.get("intended_next_pos")
-        intended_next_pos = None
+        inp = payload.get("next_pos") or payload.get("intended_next_pos")
+        next_pos = (x, y)
         if isinstance(inp, (list, tuple)) and len(inp) >= 2:
-            intended_next_pos = (inp[0], inp[1])
+            next_pos = (inp[0], inp[1])
 
         self.peer_positions[sender_id] = {
             "pos": (x, y),
-            "intended_next_pos": intended_next_pos,
+            "next_pos": next_pos,
+            "intended_next_pos": next_pos,
             "priority": payload.get("priority", 1),
-            "status": payload.get("status", "ACTIVE"),
+            "status": payload.get("status", "DOCKED"),
         }
 
     def _handle_intent(self, payload: dict) -> None:
@@ -350,14 +351,28 @@ class AMRAgent:
                 next_node = self.current_path[0]
                 next_pos = (next_node[0], next_node[1])
                 
-                # Strict Physical Collision Check
                 conflict = False
+                blocking_peer_id = None
+                
                 for peer_id, peer_data in self.peer_positions.items():
-                    if peer_data.get("status") != "DEAD":
-                        if next_pos == peer_data.get("pos"):
+                    if peer_data.get("status") not in ["DEAD", "IDLE"]:
+                        peer_curr = peer_data.get("pos")
+                        # Read peer's intent (default to current pos if not broadcasting yet)
+                        peer_next = peer_data.get("next_pos", peer_curr)
+                        
+                        # 1. Solid Matter Check (Tile is currently occupied)
+                        if next_pos == peer_curr:
+                            conflict = True
+                            blocking_peer_id = peer_id
+                            break  # Cannot step into occupied tile, regardless of priority
+                            
+                        # 2. Vertex Intersection Check (We both want the exact same empty tile)
+                        elif next_pos == peer_next and next_pos != self.current_pos:
                             peer_pri = peer_data.get("priority", 1)
+                            # Tie-breaker: Lower priority bot yields the empty tile
                             if self.priority < peer_pri or (self.priority == peer_pri and self.agent_id > peer_id):
                                 conflict = True
+                                blocking_peer_id = peer_id
                                 break
                 
                 if conflict:
@@ -393,7 +408,8 @@ class AMRAgent:
         if self.status != "DEAD" and self.current_goal and not self.current_path:
             self.plan_to_goal(*self.current_goal)
 
-        # Publish telemetry with status and intended next position
+        # Publish telemetry with status, intended next position, and next_pos
+        next_step_pos = (self.current_path[0][0], self.current_path[0][1]) if self.current_path else self.current_pos
         telemetry = {
             "agent_id": self.agent_id,
             "x": self.current_pos[0],
@@ -403,6 +419,7 @@ class AMRAgent:
             "priority": self.priority,
             "status": self.status,
             "intended_next_pos": self.intended_next_pos,
+            "next_pos": next_step_pos,
         }
         self.client.publish("fleet/telemetry", json.dumps(telemetry), qos=1)
 
