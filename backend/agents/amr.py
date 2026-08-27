@@ -55,6 +55,7 @@ class AMRAgent:
         self.last_replan_time = 0.0
         self.last_move_time = 0.0
         self.yield_ticks = 0
+        self.CHARGING_STATIONS = [(0, 0), (0, 29), (29, 0), (29, 29), (14, 0), (14, 29)]
 
         # Edge-AI bidding state
         self.bid_cost: float | None = None
@@ -414,14 +415,30 @@ class AMRAgent:
         else:
             self.intended_next_pos = None
 
-        if self.status in ["DOCKED", "IDLE"]:
-            # Hyper-charge at dock to ensure infinite demo loops
+        # 1. Hyper-charge ONLY if physically sitting on a Charging Station
+        if self.status in ["DOCKED", "IDLE"] and self.current_pos in self.CHARGING_STATIONS:
             self.battery = min(100.0, self.battery + 5.0)
         else:
-            # Normal drain while working
+            # 2. Normal drain while working or moving
             self.battery = max(0.0, self.battery - 0.1)
+            
             if self.battery == 0:
                 self.status = "DEAD"
+            # 3. Autonomous Return-to-Base at 20%
+            elif self.battery <= 20.0 and self.current_goal not in self.CHARGING_STATIONS:
+                # Find docks not currently occupied by resting peers
+                available_docks = [
+                    dock for dock in self.CHARGING_STATIONS 
+                    if not any(p.get("pos") == dock and p.get("status") in ["DOCKED", "IDLE"] for peer_id, p in self.peer_positions.items())
+                ]
+                if not available_docks:
+                    available_docks = self.CHARGING_STATIONS  # Fallback
+                
+                # Calculate nearest dock using Manhattan distance
+                nearest_dock = min(available_docks, key=lambda d: abs(d[0] - self.current_pos[0]) + abs(d[1] - self.current_pos[1]))
+                
+                # Abort current task and route to charger
+                self.plan_to_goal(*nearest_dock)
 
         # Auto-recovery: Force replan if stuck midway
         if self.status != "DEAD" and self.current_goal and not self.current_path:

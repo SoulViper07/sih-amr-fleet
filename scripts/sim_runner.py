@@ -41,7 +41,7 @@ WAREHOUSE_CONFIG = {
         "rack_3": [(x, y) for x in range(16, 18) for y in range(6, 25)],
         "rack_4": [(x, y) for x in range(22, 24) for y in range(6, 25)],
     },
-    "charging_stations": [(2, 0), (7, 0), (12, 0), (17, 0), (22, 0), (27, 0)],
+    "charging_stations": [(0, 0), (0, 29), (29, 0), (29, 29), (14, 0), (14, 29)],
     "workstations": [(2, 29), (14, 29), (27, 29)],
 }
 
@@ -53,25 +53,24 @@ OBSTACLES_SET = set(OBSTACLES)
 
 # Valid spawn positions (charging stations + workstations)
 SPAWN_POSITIONS = [
-    (2, 0),
-    (7, 0),
-    (12, 0),
-    (17, 0),
-    (22, 0),
-    (27, 0),
-    (2, 29),
+    (0, 0),
+    (0, 29),
+    (29, 0),
+    (29, 29),
+    (14, 0),
     (14, 29),
+    (2, 29),
     (27, 29),
 ]
 
-# Docked positions for 6 AMRs (strictly at y=0 charging bays)
+# Docked positions for 6 AMRs (distributed charging stations)
 DOCKED_POSITIONS = [
-    (2, 0),
-    (7, 0),
-    (12, 0),
-    (17, 0),
-    (22, 0),
-    (27, 0),
+    (0, 0),
+    (0, 29),
+    (29, 0),
+    (29, 29),
+    (14, 0),
+    (14, 29),
 ]
 
 # All valid positions (not in obstacles)
