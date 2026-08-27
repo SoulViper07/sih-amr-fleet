@@ -300,12 +300,12 @@ class AMRAgent:
         # Handle yield cooldown - if cooldown expired, resume status
         if self.status == "YIELDING" and current_time >= self.yield_cooldown:
             if self.goal or self.current_goal:
-                self.status = "MOVING"
+                self.status = "RUNNING"
             else:
-                self.status = "DOCKED"
+                self.status = "DOCKED" if self.current_pos in self.CHARGING_STATIONS else "ACTIVE"
 
-        # Edge-AI Bidding Logic: Poll for tasks when DOCKED
-        if self.status == "DOCKED":
+        # Edge-AI Bidding Logic: Poll for tasks when DOCKED or ACTIVE
+        if self.status in ["DOCKED", "ACTIVE"]:
             try:
                 res = requests.get("http://localhost:8000/api/tasks", timeout=0.5)
                 tasks = res.json().get("tasks", [])
@@ -330,9 +330,9 @@ class AMRAgent:
                 pass
 
         # Check if we won the bid (wait 1 tick after broadcasting)
-        if (self.status == "DOCKED" and self.pending_task and self.bid_broadcast_time is not None 
+        if (self.status in ["DOCKED", "ACTIVE"] and self.pending_task and self.bid_broadcast_time is not None 
             and self.local_time > self.bid_broadcast_time):
-            self.status = "MOVING"
+            self.status = "RUNNING"
             task = self.pending_task
             self.current_goal = (task["x"], task["y"])
             self.goal = (task["x"], task["y"])
@@ -346,7 +346,7 @@ class AMRAgent:
         prev_pos = self.current_pos
         current_real_time = time.time()
 
-        if self.status in ["MOVING", "YIELDING"] and self.current_path:
+        if self.status in ["RUNNING", "YIELDING"] and self.current_path:
             # INDUSTRIAL GOVERNOR: Never process a step faster than 0.45s of REAL time, ignoring tick bursts
             if current_real_time - self.last_move_time >= 0.45:
                 self.last_move_time = current_real_time
@@ -358,25 +358,24 @@ class AMRAgent:
                 blocking_peer_id = None
                 
                 for peer_id, peer_data in self.peer_positions.items():
-                    if peer_data.get("status") not in ["DEAD", "IDLE"]:
-                        peer_curr = peer_data.get("pos")
-                        # Read peer's intent (default to current pos if not broadcasting yet)
-                        peer_next = peer_data.get("next_pos", peer_curr)
+                    peer_curr = peer_data.get("pos")
+                    # Read peer's intent (default to current pos if not broadcasting yet)
+                    peer_next = peer_data.get("next_pos", peer_curr)
+                    
+                    # 1. Solid Matter Check (Tile is currently occupied)
+                    if next_pos == peer_curr:
+                        conflict = True
+                        blocking_peer_id = peer_id
+                        break  # Cannot step into occupied tile, regardless of priority
                         
-                        # 1. Solid Matter Check (Tile is currently occupied)
-                        if next_pos == peer_curr:
+                    # 2. Vertex Intersection Check (We both want the exact same empty tile)
+                    elif next_pos == peer_next and next_pos != self.current_pos:
+                        peer_pri = peer_data.get("priority", 1)
+                        # Tie-breaker: Lower priority bot yields the empty tile
+                        if self.priority < peer_pri or (self.priority == peer_pri and self.agent_id > peer_id):
                             conflict = True
                             blocking_peer_id = peer_id
-                            break  # Cannot step into occupied tile, regardless of priority
-                            
-                        # 2. Vertex Intersection Check (We both want the exact same empty tile)
-                        elif next_pos == peer_next and next_pos != self.current_pos:
-                            peer_pri = peer_data.get("priority", 1)
-                            # Tie-breaker: Lower priority bot yields the empty tile
-                            if self.priority < peer_pri or (self.priority == peer_pri and self.agent_id > peer_id):
-                                conflict = True
-                                blocking_peer_id = peer_id
-                                break
+                            break
                 
                 if conflict:
                     self.status = "YIELDING"
@@ -407,15 +406,19 @@ class AMRAgent:
                         self.yield_ticks = 0
                         self.last_replan_time = time.time()
                 else:
-                    self.status = "MOVING"
+                    self.status = "RUNNING"
                     self.yield_ticks = 0
                     self.current_path.pop(0)  # Consume the step
                     self.current_pos = next_pos
                     
         # Strict Docking Cleanup
-        if self.status in ["MOVING", "YIELDING"] and not self.current_path:
+        if self.status in ["RUNNING", "YIELDING"] and not self.current_path:
             if self.current_goal and self.current_pos == self.current_goal:
-                self.status = "DOCKED"
+                # Only DOCKED if on a charging station
+                if self.current_pos in self.CHARGING_STATIONS:
+                    self.status = "DOCKED"
+                else:
+                    self.status = "ACTIVE"
                 self.current_goal = None
                 self.goal = None
                 self.current_path = []
@@ -425,8 +428,8 @@ class AMRAgent:
         else:
             self.intended_next_pos = None
 
-        # 1. Hyper-charge ONLY if physically sitting on a Charging Station
-        if self.status in ["DOCKED", "IDLE"] and self.current_pos in self.CHARGING_STATIONS:
+        # 1. Hyper-charge ONLY if physically sitting on a Charging Station and DOCKED
+        if self.status == "DOCKED" and self.current_pos in self.CHARGING_STATIONS:
             self.battery = min(100.0, self.battery + 5.0)
         else:
             # 2. Normal drain while working or moving
@@ -484,7 +487,7 @@ class AMRAgent:
             return
 
         if self.status != "DEAD":
-            self.status = "MOVING"
+            self.status = "RUNNING"
 
         self.plan_to_goal(x, y)
 
@@ -501,17 +504,17 @@ class AMRAgent:
         if self.status == "DEAD":
             return False
 
-        if self.status in ["DOCKED", "IDLE"]:
-            self.status = "MOVING"
+        if self.status in ["DOCKED", "IDLE", "ACTIVE"]:
+            self.status = "RUNNING"
 
         self.last_replan_time = time.time()
         self.current_goal = (goal_x, goal_y)
         self.goal = (goal_x, goal_y)
         start_x, start_y = self.current_pos
 
-        # Combine static obstacles with dynamic obstacles (dead robots, yielded spots) and docked peers
-        docked_obstacles = {data["pos"] for data in self.peer_positions.values() if data.get("status") in ["DOCKED", "IDLE"]}
-        all_obstacles = self.obstacles | self.dynamic_obstacles | docked_obstacles
+        # Combine static obstacles with dynamic obstacles (dead robots, yielded spots) and solid peers
+        solid_peers = {data["pos"] for data in self.peer_positions.values() if data.get("status") in ["DEAD", "DOCKED"]}
+        all_obstacles = self.obstacles | self.dynamic_obstacles | solid_peers
 
         # Plan path starting from current local time
         path = time_space_astar(
@@ -536,7 +539,7 @@ class AMRAgent:
         else:
             self.current_path = list(adjusted_path)
 
-        self.status = "MOVING"
+        self.status = "RUNNING"
 
         # Broadcast intent to fleet
         intent = {
