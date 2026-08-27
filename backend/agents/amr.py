@@ -340,94 +340,40 @@ class AMRAgent:
 
         prev_pos = self.current_pos
 
-        # Strict Anti-Ghosting & Anti-Collision Engine
-        next_pos = None
-        for x, y, t in self.current_path:
-            if t == self.local_time + 1:  # Next tick target coordinate
-                next_pos = (x, y)
-                break
-        self.intended_next_pos = next_pos
+        if self.status != "DEAD":
+            if self.status in ["MOVING", "YIELDING"] and self.current_path:
+                next_node = self.current_path[0]
+                next_pos = (next_node[0], next_node[1])
+                
+                # Strict Physical Collision Check
+                conflict = False
+                for peer_id, peer_data in self.peer_positions.items():
+                    if peer_data.get("status") != "DEAD":
+                        # If the next tile is occupied by ANY peer
+                        if next_pos == peer_data.get("pos"):
+                            if self.priority < peer_data.get("priority", 1) or (self.priority == peer_data.get("priority", 1) and self.agent_id > peer_id):
+                                conflict = True
+                                break
+                
+                if conflict:
+                    self.status = "YIELDING"
+                    # Do not pop the path, just wait here
+                else:
+                    self.status = "MOVING"
+                    self.current_path.pop(0)  # Consume the step
+                    self.current_pos = next_pos
+                    
+            # Status cleanup
+            if self.status in ["MOVING", "YIELDING"] and not self.current_path:
+                if self.current_goal and self.current_pos == self.current_goal:
+                    self.status = "DOCKED"
+                    self.current_goal = None
+                    self.goal = None
 
-        if self.status == "DEAD":
-            # Don't advance along path - stay frozen
-            pass
-        elif self.status == "MOVING" and next_pos:
-            conflict_detected = False
-            replan_needed = False
-
-            def lower_priority_than(peer_id: str, peer_pri: int) -> bool:
-                if self.priority < peer_pri:
-                    return True
-                if self.priority == peer_pri and self.agent_id > peer_id:
-                    return True
-                return False
-
-            # 1. Occupied Tile Lock: If next_pos contains another robot
-            for peer_id, peer in self.peer_positions.items():
-                p_pos = peer.get("pos")
-                p_status = peer.get("status", "ACTIVE")
-                if p_pos == next_pos:
-                    if p_status in ["DEAD", "YIELDING", "DOCKED", "IDLE"]:
-                        conflict_detected = True
-                        replan_needed = True
-                        self.dynamic_obstacles.add(next_pos)
-                        break
-
-            # 2. Swap Collision Prevention (Edge Collision):
-            # If Self is at pos A moving to pos B, and Peer is at pos B moving to pos A
-            if not conflict_detected:
-                for peer_id, peer in self.peer_positions.items():
-                    p_pos = peer.get("pos")
-                    p_next = peer.get("intended_next_pos")
-                    p_pri = peer.get("priority", 1)
-                    if p_pos == next_pos and p_next == self.current_pos:
-                        if lower_priority_than(peer_id, p_pri):
-                            conflict_detected = True
-                            replan_needed = True
-                            self.dynamic_obstacles.add(next_pos)
-                            break
-
-            # 3. Vertex Collision Prevention:
-            # If Self and Peer both intend to move into next_pos at tick t+1
-            if not conflict_detected:
-                for peer_id, peer in self.peer_positions.items():
-                    p_next = peer.get("intended_next_pos")
-                    p_pri = peer.get("priority", 1)
-                    if p_next == next_pos:
-                        if lower_priority_than(peer_id, p_pri):
-                            conflict_detected = True
-                            break
-
-            # 4. Dynamic Time-Space Reservations Check
-            if not conflict_detected:
-                t_next = self.local_time + 1
-                if t_next in self.dynamic_reservations and next_pos in self.dynamic_reservations[t_next]:
-                    if self.priority < 5:
-                        conflict_detected = True
-
-            if conflict_detected:
-                self.status = "YIELDING"
-                self.yield_cooldown = current_time + 1.5
-                if replan_needed and self.current_goal and (current_time - self.last_replan_time > 1.0):
-                    self.plan_to_goal(*self.current_goal)
-                # Halt at current position this tick
-            else:
-                for x, y, t in self.current_path:
-                    if t == self.local_time:
-                        self.current_pos = (x, y)
-                        break
+        if self.current_path:
+            self.intended_next_pos = (self.current_path[0][0], self.current_path[0][1])
         else:
-            for x, y, t in self.current_path:
-                if t == self.local_time:
-                    self.current_pos = (x, y)
-                    break
-
-        # Check goal reached -> Automatically switch to DOCKED and clear path
-        if self.status == "MOVING" and self.goal and self.current_pos == self.goal:
-            self.status = "DOCKED"
-            self.goal = None
-            self.current_goal = None
-            self.current_path = []
+            self.intended_next_pos = None
 
         # Update battery: moving costs 0.5, idle/yielding costs 0.1
         if self.current_pos != prev_pos:
@@ -507,7 +453,12 @@ class AMRAgent:
             return False
 
         adjusted_path = [(x, y, t + self.local_time) for x, y, t in path]
-        self.current_path = adjusted_path
+        if len(adjusted_path) > 1 and (adjusted_path[0][0], adjusted_path[0][1]) == self.current_pos:
+            self.current_path = list(adjusted_path[1:])
+        else:
+            self.current_path = list(adjusted_path)
+
+        self.status = "MOVING"
 
         # Broadcast intent to fleet
         intent = {
