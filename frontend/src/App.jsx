@@ -74,8 +74,8 @@ const ChargingPad = React.memo(({ x, y }) => {
       <Ring args={[0.08, 0.16, 16]} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
         <meshBasicMaterial color="#67e8f9" transparent opacity={0.95} />
       </Ring>
-      <Billboard position={[0, 0.8, 0]}>
-        <Text fontSize={0.4} color="#67e8f9" outlineWidth={0.02} outlineColor="#083344" anchorX="center" anchorY="middle">
+      <Billboard position={[0, 0.4, 0.75]}>
+        <Text fontSize={0.3} color="#67e8f9" outlineWidth={0.02} outlineColor="#083344" anchorX="center" anchorY="middle">
           DOCK
         </Text>
       </Billboard>
@@ -171,24 +171,23 @@ const AmrMesh = React.memo(({ id, robotsRef }) => {
   const isDocked = rawStatus === "DOCKED" || rawStatus === "IDLE";
   const isYielding = rawStatus === "YIELDING";
 
-  let emissiveColor = "#10b981";
-  let textColor = "#a7f3d0";
-  let displayStatus = rawStatus === "IDLE" ? "DOCKED" : (rawStatus === "MOVING" ? "RUNNING" : rawStatus);
+  let emissiveColor = "#00FF00";
+  let textColor = "#bbf7d0";
 
   if (isDead) {
-    emissiveColor = "#ef4444"; textColor = "#fca5a5";
+    emissiveColor = "#FF0000"; textColor = "#ff8888";
   } else if (isBidding) {
-    emissiveColor = "#06b6d4"; textColor = "#a5f3fc";
+    emissiveColor = "#00FFFF"; textColor = "#a5f3fc";
   } else if (isClaimed) {
-    emissiveColor = "#eab308"; textColor = "#fef08a";
+    emissiveColor = "#FFEE00"; textColor = "#fef08a";
   } else if (isYielding) {
-    emissiveColor = "#ea580c"; textColor = "#fed7aa";
+    emissiveColor = "#FFAA00"; textColor = "#fed7aa";
   } else if (isDocked) {
-    emissiveColor = "#38bdf8"; textColor = "#bae6fd";
+    emissiveColor = "#9D00FF"; textColor = "#e9d5ff";
   } else if (rawStatus === "ACTIVE") {
-    emissiveColor = "#f59e0b"; textColor = "#fde68a";
+    emissiveColor = "#00BBFF"; textColor = "#bae6fd";
   } else if (isRunning) {
-    emissiveColor = "#10b981"; textColor = "#a7f3d0";
+    emissiveColor = "#00FF00"; textColor = "#bbf7d0";
   }
 
   return (
@@ -204,7 +203,7 @@ const AmrMesh = React.memo(({ id, robotsRef }) => {
         </Cylinder>
         {/* Glowing Status LED Strip */}
         <Cylinder args={[0.46, 0.46, 0.05, 32]} position={[0, 0, 0]}>
-          <meshBasicMaterial color={emissiveColor} transparent opacity={0.9} />
+          <meshBasicMaterial color={emissiveColor} toneMapped={false} transparent opacity={0.95} />
         </Cylinder>
       </group>
       {isDead && <pointLight position={[0, 1, 0]} intensity={5} distance={4} color="#ef4444" />}
@@ -224,8 +223,8 @@ const AmrMesh = React.memo(({ id, robotsRef }) => {
             [AI: PROXIMITY YIELD]
           </Text>
         )}
-        <Text fontSize={0.4} color={textColor} anchorX="center" anchorY="middle" outlineWidth={0.02} outlineColor="#000000">
-          {`${id} [${displayStatus}]\n${visualState.battery}%`}
+        <Text fontSize={0.35} color={textColor} anchorX="center" anchorY="middle" outlineWidth={0.02} outlineColor="#000000">
+          {id}
         </Text>
       </Billboard>
       {/* 0-GPU Circular Faded Drop Shadow */}
@@ -313,7 +312,7 @@ const SimulationCanvas = React.memo(({ robotIds, robotsRef, obstacles, chargingS
     <div className="w-3/4 h-full relative">
       <Canvas camera={{ position: [0, 24, 28], fov: 48 }} style={{ touchAction: 'none' }}>
         <color attach="background" args={['#120d0b']} />
-        <fog attach="fog" args={['#120d0b', 15, 45]} />
+        <fog attach="fog" args={['#120d0b', 25, 65]} />
         <Scene robotIds={robotIds} robotsRef={robotsRef} obstacles={obstacles} chargingStations={chargingStations} targetBeacons={targetBeacons} onFloorClick={onFloorClick} />
         <OrbitControls makeDefault target={[0, 0, 0]} enablePan={true} enableZoom={true} enableRotate={true} minPolarAngle={0} maxPolarAngle={Math.PI / 2 - 0.05} minZoom={5} maxZoom={60} />
       </Canvas>
