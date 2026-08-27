@@ -11,6 +11,7 @@ import json
 import logging
 import threading
 import random
+import uuid
 from typing import TYPE_CHECKING
 
 import paho.mqtt.client as mqtt
@@ -81,7 +82,7 @@ class Coordinator:
     """Coordinates the simulation by publishing clock ticks and collecting telemetry."""
 
     def __init__(self) -> None:
-        self.client = mqtt.Client(client_id="coordinator", clean_session=True)
+        self.client = mqtt.Client(client_id=f"coordinator_{uuid.uuid4().hex[:8]}", clean_session=True)
         self.client.on_message = self._on_message
         self.live_positions: dict[str, dict] = {}
         self._lock = threading.Lock()

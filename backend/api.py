@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import random
+import uuid
 from typing import Any
 
 import paho.mqtt.client as mqtt
@@ -59,6 +60,7 @@ mqtt_client: mqtt.Client | None = None
 
 def on_mqtt_message(client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> None:
     """MQTT message callback - pushes to async queue for WebSocket broadcast."""
+    print(f"MQTT IN: {msg.topic}")
     try:
         payload = json.loads(msg.payload.decode())
         payload["topic"] = msg.topic
@@ -102,7 +104,7 @@ async def startup_event() -> None:
     SABOTAGED_AGENTS.clear()
     PENDING_TASKS.clear()
 
-    mqtt_client = mqtt.Client(client_id="fastapi-bridge", clean_session=True)
+    mqtt_client = mqtt.Client(client_id=f"fastapi_bridge_{uuid.uuid4().hex[:8]}", clean_session=True)
     mqtt_client.on_message = on_mqtt_message
 
     try:

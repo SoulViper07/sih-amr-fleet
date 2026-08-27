@@ -5,6 +5,7 @@ import logging
 import random
 import requests
 import time
+import uuid
 from typing import TYPE_CHECKING
 
 import paho.mqtt.client as mqtt
@@ -65,12 +66,12 @@ class AMRAgent:
         self.intended_next_pos: tuple[int, int] | None = None
 
         # MQTT client setup
-        self.client = mqtt.Client(client_id=agent_id, clean_session=True)
+        self.client = mqtt.Client(client_id=f"{agent_id}_{uuid.uuid4().hex[:8]}", clean_session=True)
         self.client.on_connect = self._on_connect
         self.client.on_message = self._on_message
         self.client.on_disconnect = self._on_disconnect
 
-    def connect(self, broker: str = "localhost", port: int = 1883) -> None:
+    def connect(self, broker: str = "broker.emqx.io", port: int = 1883) -> None:
         """Connect to MQTT broker and start network loop.
 
         Args:
