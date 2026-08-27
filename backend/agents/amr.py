@@ -385,6 +385,10 @@ class AMRAgent:
         else:
             self.battery = max(0.0, self.battery - 0.1)
 
+        # Auto-recovery: Force replan if stuck midway
+        if self.status != "DEAD" and self.current_goal and not self.current_path:
+            self.plan_to_goal(*self.current_goal)
+
         # Publish telemetry with status and intended next position
         telemetry = {
             "agent_id": self.agent_id,
