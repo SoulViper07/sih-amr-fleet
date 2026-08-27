@@ -53,6 +53,7 @@ class AMRAgent:
         self.last_sabotage_check = 0.0
         self.yield_cooldown = 0.0
         self.last_replan_time = 0.0
+        self.last_move_time = 0.0
 
         # Edge-AI bidding state
         self.bid_cost: float | None = None
@@ -339,9 +340,13 @@ class AMRAgent:
             self.bid_broadcast_time = None
 
         prev_pos = self.current_pos
+        current_real_time = time.time()
 
-        if self.status != "DEAD":
-            if self.status in ["MOVING", "YIELDING"] and self.current_path:
+        if self.status in ["MOVING", "YIELDING"] and self.current_path:
+            # INDUSTRIAL GOVERNOR: Never process a step faster than 0.45s of REAL time, ignoring tick bursts
+            if current_real_time - self.last_move_time >= 0.45:
+                self.last_move_time = current_real_time
+                
                 next_node = self.current_path[0]
                 next_pos = (next_node[0], next_node[1])
                 
@@ -349,26 +354,25 @@ class AMRAgent:
                 conflict = False
                 for peer_id, peer_data in self.peer_positions.items():
                     if peer_data.get("status") != "DEAD":
-                        # If the next tile is occupied by ANY peer
                         if next_pos == peer_data.get("pos"):
-                            if self.priority < peer_data.get("priority", 1) or (self.priority == peer_data.get("priority", 1) and self.agent_id > peer_id):
+                            peer_pri = peer_data.get("priority", 1)
+                            if self.priority < peer_pri or (self.priority == peer_pri and self.agent_id > peer_id):
                                 conflict = True
                                 break
                 
                 if conflict:
                     self.status = "YIELDING"
-                    # Do not pop the path, just wait here
                 else:
                     self.status = "MOVING"
                     self.current_path.pop(0)  # Consume the step
                     self.current_pos = next_pos
                     
-            # Status cleanup
-            if self.status in ["MOVING", "YIELDING"] and not self.current_path:
-                if self.current_goal and self.current_pos == self.current_goal:
-                    self.status = "DOCKED"
-                    self.current_goal = None
-                    self.goal = None
+        # Strict Docking Cleanup
+        if self.status in ["MOVING", "YIELDING"] and not self.current_path:
+            if self.current_goal and self.current_pos == self.current_goal:
+                self.status = "DOCKED"
+                self.current_goal = None
+                self.goal = None
 
         if self.current_path:
             self.intended_next_pos = (self.current_path[0][0], self.current_path[0][1])
