@@ -2,6 +2,7 @@
 
 import json
 import logging
+import random
 import requests
 import time
 from typing import TYPE_CHECKING
@@ -380,22 +381,31 @@ class AMRAgent:
                 if conflict:
                     self.status = "YIELDING"
                     self.yield_ticks += 1
-                    if self.yield_ticks > 3 and blocking_peer_id:
-                        # 1. Flag the VIP bot as a solid brick wall
-                        blocker_pos = self.peer_positions[blocking_peer_id].get("pos") if blocking_peer_id in self.peer_positions else None
+                    # Randomized backoff to shatter livelock symmetry (3 to 6 ticks)
+                    if self.yield_ticks > random.randint(3, 6) and blocking_peer_id and blocking_peer_id in self.peer_positions:
+                        blocker_data = self.peer_positions[blocking_peer_id]
+                        blocker_pos = blocker_data.get("pos")
+                        blocker_next = blocker_data.get("next_pos", blocker_pos)
+                        
+                        # 1. Flag both the VIP bot's current AND next intended tile as solid brick walls
+                        walls_added = []
                         if blocker_pos:
                             self.dynamic_obstacles.add(blocker_pos)
+                            walls_added.append(blocker_pos)
+                        if blocker_next and blocker_next != blocker_pos:
+                            self.dynamic_obstacles.add(blocker_next)
+                            walls_added.append(blocker_next)
                         
-                        # 2. Force replan (A* will now route AROUND the VIP bot)
+                        # 2. Force replan with a much wider detour
                         if self.current_goal:
                             self.plan_to_goal(*self.current_goal)
                         
-                        # 3. Remove the temporary wall so the map isn't permanently broken
-                        if blocker_pos:
-                            self.dynamic_obstacles.discard(blocker_pos)
+                        # 3. Cleanup temporary walls
+                        for w in walls_added:
+                            self.dynamic_obstacles.discard(w)
                             
                         self.yield_ticks = 0
-                        self.last_replan_time = time.time()  # Prevent immediate auto-recovery loop
+                        self.last_replan_time = time.time()
                 else:
                     self.status = "MOVING"
                     self.yield_ticks = 0
