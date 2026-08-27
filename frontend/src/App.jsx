@@ -169,31 +169,40 @@ const AmrMesh = React.memo(({ id, robotsRef }) => {
   const isDocked = rawStatus === "DOCKED" || rawStatus === "IDLE";
   const isYielding = rawStatus === "YIELDING";
 
-  let meshColor = "#d97706";
   let emissiveColor = "#f59e0b";
-  let emissiveIntensity = 2;
   let textColor = "#fde68a";
   let displayStatus = rawStatus === "IDLE" ? "DOCKED" : rawStatus;
 
   if (isDead) {
-    meshColor = "#ef4444"; emissiveColor = "#ef4444"; emissiveIntensity = 3.5; textColor = "#fca5a5";
+    emissiveColor = "#ef4444"; textColor = "#fca5a5";
   } else if (isBidding) {
-    meshColor = "#0891b2"; emissiveColor = "#06b6d4"; emissiveIntensity = 3.2; textColor = "#a5f3fc";
+    emissiveColor = "#06b6d4"; textColor = "#a5f3fc";
   } else if (isClaimed) {
-    meshColor = "#ca8a04"; emissiveColor = "#eab308"; emissiveIntensity = 3.5; textColor = "#fef08a";
+    emissiveColor = "#eab308"; textColor = "#fef08a";
   } else if (isDocked) {
-    meshColor = "#0284c7"; emissiveColor = "#38bdf8"; emissiveIntensity = 1.8; textColor = "#bae6fd";
+    emissiveColor = "#38bdf8"; textColor = "#bae6fd";
   } else if (isYielding) {
-    meshColor = "#c2410c"; emissiveColor = "#ea580c"; emissiveIntensity = 2.2; textColor = "#fed7aa";
+    emissiveColor = "#ea580c"; textColor = "#fed7aa";
   }
 
   return (
     <group ref={meshRef}>
-      <Box args={[0.7, 0.7, 0.7]} position={[0, 0.35, 0]}>
-        <meshStandardMaterial color={meshColor} emissive={emissiveColor} emissiveIntensity={emissiveIntensity} toneMapped={false} />
-      </Box>
+      <group position={[0, 0.15, 0]}>
+        {/* Main Chassis */}
+        <Cylinder args={[0.45, 0.45, 0.3, 32]}>
+          <meshStandardMaterial color="#222222" metalness={0.8} roughness={0.2} />
+        </Cylinder>
+        {/* Top LiDAR/Sensor Hub */}
+        <Cylinder args={[0.2, 0.2, 0.15, 16]} position={[0, 0.2, 0]}>
+          <meshStandardMaterial color="#111111" metalness={0.9} roughness={0.1} />
+        </Cylinder>
+        {/* Glowing Status LED Strip */}
+        <Cylinder args={[0.46, 0.46, 0.05, 32]} position={[0, 0, 0]}>
+          <meshBasicMaterial color={emissiveColor} transparent opacity={0.9} />
+        </Cylinder>
+      </group>
       {isDead && <pointLight position={[0, 1, 0]} intensity={5} distance={4} color="#ef4444" />}
-      <Billboard position={[0, 1.8, 0]}>
+      <Billboard position={[0, 1.2, 0]}>
         {isBidding && (
           <Text position={[0, 0.6, 0]} fontSize={0.25} color="#22d3ee" anchorX="center" anchorY="middle" outlineWidth={0.02} outlineColor="#083344">
             [AI: CALCULATING TRAFFIC COST]
@@ -213,9 +222,6 @@ const AmrMesh = React.memo(({ id, robotsRef }) => {
           {`${id} [${displayStatus}]\n${visualState.battery}%`}
         </Text>
       </Billboard>
-      <Box args={[0.5, 0.02, 0.5]} position={[0, 0.01, 0]}>
-        <meshBasicMaterial color={emissiveColor} transparent opacity={isDead ? 0.6 : 0.4} />
-      </Box>
     </group>
   );
 });
@@ -298,12 +304,13 @@ const SimulationCanvas = React.memo(({ robotIds, robotsRef, obstacles, chargingS
   return (
     <div className="w-3/4 h-full relative">
       <Canvas camera={{ position: [0, 24, 28], fov: 48 }} style={{ touchAction: 'none' }}>
-        <color attach="background" args={['#030712']} />
+        <color attach="background" args={['#120d0b']} />
+        <fog attach="fog" args={['#120d0b', 15, 45]} />
         <Scene robotIds={robotIds} robotsRef={robotsRef} obstacles={obstacles} chargingStations={chargingStations} targetBeacons={targetBeacons} onFloorClick={onFloorClick} />
         <OrbitControls makeDefault target={[0, 0, 0]} enablePan={true} enableZoom={true} enableRotate={true} minPolarAngle={0} maxPolarAngle={Math.PI / 2 - 0.05} minZoom={5} maxZoom={60} />
       </Canvas>
-      <div className="absolute top-4 left-4 text-[11px] font-mono text-neutral-400 bg-neutral-900/85 px-3 py-1.5 rounded border border-neutral-700 backdrop-blur shadow-lg flex items-center gap-2">
-        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+      <div className="absolute top-4 left-4 text-[11px] font-mono text-[#f5f5dc] bg-[#1a1311]/90 px-3 py-1.5 rounded border border-[#d4af37]/30 backdrop-blur shadow-lg flex items-center gap-2">
+        <span className="w-2 h-2 rounded-full bg-[#d4af37] animate-pulse" />
         <span>Click floor to deploy • Drag to rotate • Scroll to zoom</span>
       </div>
     </div>
@@ -338,34 +345,34 @@ const DashboardPanel = ({ robotIds, robots, time, isConnected, selectedAgent, se
   const sortedRobotIds = [...robotIds].sort();
 
   return (
-    <motion.div className="w-1/4 h-full flex flex-col p-4 bg-neutral-900 border-l border-yellow-700/30 overflow-hidden" initial={{ x: '100%', opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={{ type: 'spring', damping: 20, stiffness: 100, delay: 0.2 }}>
-      <div className="flex items-center justify-between mb-3 border-b border-yellow-700/20 pb-3 flex-shrink-0">
+    <motion.div className="w-1/4 h-full flex flex-col p-4 bg-[#1a1311] border-l border-[#d4af37]/30 overflow-hidden" initial={{ x: '100%', opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={{ type: 'spring', damping: 20, stiffness: 100, delay: 0.2 }}>
+      <div className="flex items-center justify-between mb-3 border-b border-[#d4af37]/20 pb-3 flex-shrink-0">
         <div className="flex items-center gap-2">
-          <div className="p-1.5 bg-yellow-700/20 rounded-lg border border-yellow-700/30"><Radio className="w-4 h-4 text-yellow-500" /></div>
-          <div><motion.h1 className="text-base font-bold tracking-tight text-yellow-300" initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }}>EDGE-AI FLEET</motion.h1><p className="text-[9px] text-yellow-600 uppercase tracking-widest">DECENTRALIZED SWARM</p></div>
+          <div className="p-1.5 bg-[#1f1614] rounded-lg border border-[#d4af37]/30"><Radio className="w-4 h-4 text-[#d4af37]" /></div>
+          <div><motion.h1 className="text-base font-bold tracking-tight text-[#d4af37]" initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }}>EDGE-AI FLEET</motion.h1><p className="text-[9px] text-[#f5f5dc]/70 uppercase tracking-widest">DECENTRALIZED SWARM</p></div>
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1 bg-neutral-800 px-2 py-1 rounded-lg border border-yellow-700/30">
-            <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'}`}></div>
-            <span className={`text-[10px] font-medium ${isConnected ? 'text-yellow-400' : 'text-red-500'}`}>{isConnected ? 'MESH ON' : 'DOWN'}</span>
+          <div className="flex items-center gap-1 bg-[#1f1614] px-2 py-1 rounded-lg border border-[#d4af37]/30">
+            <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-[#d4af37] animate-pulse' : 'bg-red-500'}`}></div>
+            <span className={`text-[10px] font-medium ${isConnected ? 'text-[#d4af37]' : 'text-red-500'}`}>{isConnected ? 'MESH ON' : 'DOWN'}</span>
           </div>
-          <div className="flex items-center gap-1 bg-neutral-800 px-2 py-1 rounded-lg border border-yellow-700/30">
-            <Clock className="w-3 h-3 text-yellow-600" />
-            <span className="text-sm font-mono tabular-nums text-yellow-400">T+{String(time).padStart(3, '0')}</span>
+          <div className="flex items-center gap-1 bg-[#1f1614] px-2 py-1 rounded-lg border border-[#d4af37]/30">
+            <Clock className="w-3 h-3 text-[#d4af37]" />
+            <span className="text-sm font-mono tabular-nums text-[#fffff0]">T+{String(time).padStart(3, '0')}</span>
           </div>
         </div>
       </div>
 
-      <div className="mb-3 bg-neutral-800/50 rounded-lg border border-yellow-700/20 p-2.5 flex-shrink-0">
+      <div className="mb-3 bg-[#1f1614] rounded-lg border border-[#d4af37]/20 p-2.5 flex-shrink-0">
         <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-1.5"><Target className="w-3.5 h-3.5 text-yellow-500" /><h3 className="font-semibold text-yellow-300 text-xs">DISPATCH SELECTOR</h3></div>
-          <span className="text-[9px] text-neutral-400">CLICK FLOOR TO DEPLOY</span>
+          <div className="flex items-center gap-1.5"><Target className="w-3.5 h-3.5 text-[#d4af37]" /><h3 className="font-semibold text-[#d4af37] text-xs">DISPATCH SELECTOR</h3></div>
+          <span className="text-[9px] text-[#f5f5dc]/60">CLICK FLOOR TO DEPLOY</span>
         </div>
         <div className="grid grid-cols-3 gap-1.5">
           {sortedRobotIds.map((agent) => {
             const agentStatus = (robots[agent]?.status || "ACTIVE").toUpperCase();
             return (
-              <motion.button key={agent} onClick={() => setSelectedAgent(agent)} whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} className={`px-2 py-1 rounded font-medium text-[10px] uppercase tracking-wide transition-all text-neutral-300 flex items-center justify-between ${selectedAgent === agent ? 'bg-yellow-600/25 border border-yellow-500 text-yellow-300 shadow-[0_0_10px_rgba(234,179,8,0.3)]' : 'bg-neutral-900 border border-neutral-700 hover:border-yellow-700/50 hover:bg-neutral-800'}`}>
+              <motion.button key={agent} onClick={() => setSelectedAgent(agent)} whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} className={`px-2 py-1 rounded font-medium text-[10px] uppercase tracking-wide transition-all flex items-center justify-between ${selectedAgent === agent ? 'bg-[#d4af37]/25 border border-[#d4af37] text-[#fffff0] shadow-[0_0_10px_rgba(212,175,55,0.3)]' : 'bg-[#1a1311] border border-[#d4af37]/20 text-[#f5f5dc] hover:border-[#d4af37]/50 hover:bg-[#251b18]'}`}>
                 <span>{agent}</span>
                 <span className={`w-1.5 h-1.5 rounded-full ${agentStatus === "BIDDING" ? 'bg-cyan-400' : agentStatus === "CLAIMED" ? 'bg-yellow-400' : agentStatus === "DOCKED" || agentStatus === "IDLE" ? 'bg-sky-400' : agentStatus === "DEAD" ? 'bg-red-500' : agentStatus === "YIELDING" ? 'bg-orange-500' : 'bg-emerald-400'}`} />
               </motion.button>
@@ -374,10 +381,10 @@ const DashboardPanel = ({ robotIds, robots, time, isConnected, selectedAgent, se
         </div>
       </div>
 
-      <div className="mb-3 bg-neutral-800/50 rounded-lg border border-yellow-700/20 p-2.5 flex-shrink-0">
+      <div className="mb-3 bg-[#1f1614] rounded-lg border border-[#d4af37]/20 p-2.5 flex-shrink-0">
         <div className="flex items-center justify-between mb-1.5">
-          <div className="flex items-center gap-1.5"><Cpu className="w-3.5 h-3.5 text-yellow-500" /><h3 className="font-semibold text-yellow-300 text-xs">SWARM TELEMETRY</h3></div>
-          <span className="text-[9px] text-yellow-600">SABOTAGE CONTROLS</span>
+          <div className="flex items-center gap-1.5"><Cpu className="w-3.5 h-3.5 text-[#d4af37]" /><h3 className="font-semibold text-[#d4af37] text-xs">SWARM TELEMETRY</h3></div>
+          <span className="text-[9px] text-[#d4af37]/80">SABOTAGE CONTROLS</span>
         </div>
         <div className="space-y-1.5 max-h-[150px] overflow-y-auto custom-scrollbar pr-1">
           {sortedRobotIds.map((id) => {
@@ -386,11 +393,11 @@ const DashboardPanel = ({ robotIds, robots, time, isConnected, selectedAgent, se
             const isDead = pos.status === "DEAD";
 
             return (
-              <div key={id} className={`bg-neutral-900 rounded border p-2 transition-all ${isDead ? 'border-red-800/60 bg-red-950/20' : 'border-neutral-700/80'}`}>
+              <div key={id} className={`bg-[#1a1311] rounded border p-2 transition-all ${isDead ? 'border-red-800/60 bg-red-950/20' : 'border-[#d4af37]/20'}`}>
                 <div className="flex items-center justify-between mb-1">
                   <div className="flex items-center gap-1.5">
-                    <span className={`font-bold text-xs ${isDead ? 'text-red-400 line-through' : 'text-yellow-400'}`}>{id}</span>
-                    <span className="text-[9px] text-neutral-400">({pos.x ?? 0}, {pos.y ?? 0})</span>
+                    <span className={`font-bold text-xs ${isDead ? 'text-red-400 line-through' : 'text-[#fffff0]'}`}>{id}</span>
+                    <span className="text-[9px] text-[#f5f5dc]/60">({pos.x ?? 0}, {pos.y ?? 0})</span>
                   </div>
                   <div className="flex items-center gap-1.5">
                     {getStatusBadge(displayStatus)}
@@ -401,11 +408,11 @@ const DashboardPanel = ({ robotIds, robots, time, isConnected, selectedAgent, se
                 </div>
                 <div className="flex items-center gap-1.5">
                   <div className="flex-shrink-0">{getBatteryIcon(pos.battery ?? 100)}</div>
-                  <div className="flex-1 h-1.5 bg-neutral-700 rounded-full overflow-hidden">
+                  <div className="flex-1 h-1.5 bg-[#120d0b] rounded-full overflow-hidden border border-[#d4af37]/10">
                     <motion.div className={`h-full rounded-full ${getBatteryColor(pos.battery ?? 100)}`} initial={{ width: 0 }} animate={{ width: `${pos.battery ?? 100}%` }} transition={{ type: 'spring', damping: 20, stiffness: 100 }} />
                   </div>
                   <span className={`font-mono text-[9px] w-7 text-right ${(pos.battery ?? 100) > 50 ? 'text-emerald-400' : (pos.battery ?? 100) > 20 ? 'text-amber-400' : 'text-red-400'}`}>{pos.battery ?? 100}%</span>
-                  <span className="text-[9px] text-neutral-400 font-mono">PRI:{pos.priority ?? 1}</span>
+                  <span className="text-[9px] text-[#d4af37] font-mono">PRI:{pos.priority ?? 1}</span>
                 </div>
               </div>
             );
@@ -413,10 +420,10 @@ const DashboardPanel = ({ robotIds, robots, time, isConnected, selectedAgent, se
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 flex flex-col bg-black p-2.5 border border-yellow-700/50 rounded-lg overflow-hidden">
+      <div className="flex-1 min-h-0 flex flex-col bg-[#1f1614] p-2.5 border border-[#d4af37]/30 rounded-lg overflow-hidden">
         <div className="flex items-center justify-between mb-2 flex-shrink-0">
-          <div className="flex items-center gap-1.5"><Terminal className="w-3.5 h-3.5 text-yellow-500" /><h3 className="font-semibold text-yellow-300 text-xs">P2P AUCTION TERMINAL</h3></div>
-          <span className="text-[8px] bg-yellow-700/20 text-yellow-400 px-1.5 py-0.5 rounded border border-yellow-700/40">DECENTRALIZED</span>
+          <div className="flex items-center gap-1.5"><Terminal className="w-3.5 h-3.5 text-[#d4af37]" /><h3 className="font-semibold text-[#d4af37] text-xs">P2P AUCTION TERMINAL</h3></div>
+          <span className="text-[8px] bg-[#d4af37]/15 text-[#d4af37] px-1.5 py-0.5 rounded border border-[#d4af37]/30">DECENTRALIZED</span>
         </div>
         <div className="flex-1 overflow-y-auto custom-scrollbar space-y-1.5 pr-1 font-mono text-[10px]">
           <AnimatePresence initial={false}>
@@ -428,8 +435,8 @@ const DashboardPanel = ({ robotIds, robots, time, isConnected, selectedAgent, se
                 const isDead = log.status === 'DEAD' || log.type === 'FAILURE';
                 const isDispatch = log.type === 'DISPATCH';
 
-                let containerStyle = 'bg-neutral-900 border-neutral-700 text-neutral-300';
-                let tagStyle = 'bg-neutral-800 text-neutral-400 border-neutral-600';
+                let containerStyle = 'bg-[#1a1311] border-[#d4af37]/20 text-[#f5f5dc]';
+                let tagStyle = 'bg-[#120d0b] text-[#f5f5dc]/70 border-[#d4af37]/20';
                 let tagText = log.status || log.type || 'INFO';
 
                 if (isBid) { containerStyle = 'bg-cyan-950/50 border-cyan-500/60 text-cyan-200 shadow-[0_0_10px_rgba(6,182,212,0.2)]'; tagStyle = 'bg-cyan-500/20 text-cyan-300 border-cyan-400/50'; tagText = 'BIDDING'; }
@@ -601,7 +608,7 @@ export default function App() {
   };
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-neutral-950 text-amber-50 flex">
+    <div className="h-screen w-screen overflow-hidden bg-[#120d0b] text-[#f5f5dc] flex">
       <SimulationCanvas robotIds={robotIds} robotsRef={robotsRef} obstacles={obstacles} chargingStations={chargingStations} targetBeacons={targetBeacons} onFloorClick={handleFloorClick} />
       <DashboardPanel robotIds={robotIds} robots={telemetryRobots} time={time} isConnected={isConnected} selectedAgent={selectedAgent} setSelectedAgent={setSelectedAgent} logs={logs} onSabotage={handleSabotage} />
     </div>
