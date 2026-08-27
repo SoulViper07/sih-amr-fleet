@@ -162,17 +162,19 @@ def main() -> None:
     coordinator = Coordinator()
     coordinator.connect()
 
-    # Wait for connections to establish
-    time.sleep(1)
-
-    logger.info("Starting continuous simulation loop (t=0 to 300)")
+    logger.info("Starting continuous simulation loop (infinite production mode)")
     logger.info("Agents will bid on tasks via Edge-AI Contract Net Protocol")
     logger.info("-" * 60)
 
-    # Simulation loop (longer for continuous operation)
-    for t in range(301):
-        coordinator.publish_clock(t)
-        time.sleep(0.5)
+    # Simulation loop (infinite runtime for production demo)
+    t = 0
+    try:
+        while True:
+            coordinator.publish_clock(t)
+            t += 1
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        logger.info("Simulation interrupted by user")
 
     logger.info("-" * 60)
     logger.info("Simulation complete")
