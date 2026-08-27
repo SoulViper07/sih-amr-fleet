@@ -373,17 +373,21 @@ class AMRAgent:
                 self.status = "DOCKED"
                 self.current_goal = None
                 self.goal = None
+                self.current_path = []
 
         if self.current_path:
             self.intended_next_pos = (self.current_path[0][0], self.current_path[0][1])
         else:
             self.intended_next_pos = None
 
-        # Update battery: moving costs 0.5, idle/yielding costs 0.1
-        if self.current_pos != prev_pos:
-            self.battery = max(0.0, self.battery - 0.5)
+        if self.status in ["DOCKED", "IDLE"]:
+            # Hyper-charge at dock to ensure infinite demo loops
+            self.battery = min(100.0, self.battery + 5.0)
         else:
+            # Normal drain while working
             self.battery = max(0.0, self.battery - 0.1)
+            if self.battery == 0:
+                self.status = "DEAD"
 
         # Auto-recovery: Force replan if stuck midway
         if self.status != "DEAD" and self.current_goal and not self.current_path:
