@@ -52,6 +52,7 @@ class AMRAgent:
         self.status = "DOCKED"  # Start docked at charging bay
         self.last_sabotage_check = 0.0
         self.yield_cooldown = 0.0
+        self.last_replan_time = 0.0
 
         # Edge-AI bidding state
         self.bid_cost: float | None = None
@@ -220,7 +221,7 @@ class AMRAgent:
                             other_x, other_y = first_node[0], first_node[1]
                             self.dynamic_obstacles.add((other_x, other_y))
                     
-                    if self.current_goal:
+                    if self.current_goal and (current_time - self.last_replan_time > 1.0):
                         self.plan_to_goal(*self.current_goal)
 
     def _handle_bid(self, payload: dict) -> None:
@@ -404,7 +405,7 @@ class AMRAgent:
             if conflict_detected:
                 self.status = "YIELDING"
                 self.yield_cooldown = current_time + 1.5
-                if replan_needed and self.current_goal:
+                if replan_needed and self.current_goal and (current_time - self.last_replan_time > 1.0):
                     self.plan_to_goal(*self.current_goal)
                 # Halt at current position this tick
             else:
@@ -476,6 +477,7 @@ class AMRAgent:
         if self.status in ["DOCKED", "IDLE"]:
             self.status = "MOVING"
 
+        self.last_replan_time = time.time()
         self.current_goal = (goal_x, goal_y)
         self.goal = (goal_x, goal_y)
         start_x, start_y = self.current_pos
@@ -496,6 +498,8 @@ class AMRAgent:
 
         if path is None:
             self.current_path = []
+            self.status = "YIELDING"
+            self.yield_cooldown = time.time() + 2.0
             return False
 
         adjusted_path = [(x, y, t + self.local_time) for x, y, t in path]

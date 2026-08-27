@@ -17,6 +17,7 @@ def time_space_astar(
     static_obstacles: set[Coord],
     dynamic_reservations: dict[int, set[Coord]],
     max_time: int = 100,
+    max_iterations: int = 1000,
 ) -> list[State] | None:
     """Find a time-space path from start to goal avoiding static and dynamic obstacles.
 
@@ -28,6 +29,7 @@ def time_space_astar(
         static_obstacles: Set of (x, y) coordinates that are permanently blocked.
         dynamic_reservations: Mapping of time step -> set of reserved (x, y) coordinates.
         max_time: Maximum time steps to search before giving up.
+        max_iterations: Safety circuit breaker to prevent search state explosion.
 
     Returns:
         List of (x, y, t) states representing the path, or None if no path found.
@@ -101,7 +103,13 @@ def time_space_astar(
     # Track parents for path reconstruction
     parents: dict[State, State | None] = {(start_x, start_y, 0): None}
 
+    iterations = 0
     while open_set:
+        iterations += 1
+        if iterations > max_iterations:
+            print(f"[TimeSpaceA*] Circuit breaker triggered! Iterations exceeded {max_iterations}. Aborting search.")
+            return None
+
         f_score, g_score, x, y, t = heapq.heappop(open_set)
 
         current_state = (x, y, t)
