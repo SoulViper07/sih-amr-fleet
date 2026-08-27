@@ -292,9 +292,12 @@ class AMRAgent:
             except Exception:
                 pass
 
-        # Handle yield cooldown - if cooldown expired, resume ACTIVE status
+        # Handle yield cooldown - if cooldown expired, resume status
         if self.status == "YIELDING" and current_time >= self.yield_cooldown:
-            self.status = "ACTIVE"
+            if self.goal or self.current_goal:
+                self.status = "MOVING"
+            else:
+                self.status = "DOCKED"
 
         # Edge-AI Bidding Logic: Poll for tasks when DOCKED
         if self.status == "DOCKED":
@@ -482,8 +485,9 @@ class AMRAgent:
         self.goal = (goal_x, goal_y)
         start_x, start_y = self.current_pos
 
-        # Combine static obstacles with dynamic obstacles (dead robots, yielded spots)
-        all_obstacles = self.obstacles | self.dynamic_obstacles
+        # Combine static obstacles with dynamic obstacles (dead robots, yielded spots) and docked peers
+        docked_obstacles = {data["pos"] for data in self.peer_positions.values() if data.get("status") in ["DOCKED", "IDLE"]}
+        all_obstacles = self.obstacles | self.dynamic_obstacles | docked_obstacles
 
         # Plan path starting from current local time
         path = time_space_astar(

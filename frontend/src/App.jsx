@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, Box, Text, Plane, Ring, Sphere, Cylinder, Billboard } from '@react-three/drei';
-import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import * as THREE from 'three';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -30,7 +29,7 @@ const WarehouseRack = React.memo(({ x, y }) => {
   const [wx, , wz] = gridToWorld(x, y);
   return (
     <group position={[wx, 1.5, wz]}>
-      <Box args={[0.9, 3, 0.9]} castShadow receiveShadow>
+      <Box args={[0.9, 3, 0.9]}>
         <meshStandardMaterial color="#334155" metalness={0.65} roughness={0.35} />
       </Box>
       <Box args={[0.92, 0.04, 0.92]} position={[0, -0.75, 0]}>
@@ -64,8 +63,8 @@ const ChargingPad = React.memo(({ x, y }) => {
   });
 
   return (
-    <group position={[wx, 0, wz]}>
-      <Plane args={[0.85, 0.85]} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]} receiveShadow>
+    <group position={[wx, 0, wz - 1]}>
+      <Plane args={[0.85, 0.85]} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
         <meshStandardMaterial color="#06b6d4" emissive="#22d3ee" emissiveIntensity={2.5} toneMapped={false} transparent opacity={0.85} />
       </Plane>
       <Ring ref={ringRef} args={[0.36, 0.42, 4]} rotation={[-Math.PI / 2, 0, Math.PI / 4]} position={[0, 0.015, 0]}>
@@ -190,7 +189,7 @@ const AmrMesh = React.memo(({ id, robotsRef }) => {
 
   return (
     <group ref={meshRef}>
-      <Box args={[0.7, 0.7, 0.7]} position={[0, 0.35, 0]} castShadow receiveShadow>
+      <Box args={[0.7, 0.7, 0.7]} position={[0, 0.35, 0]}>
         <meshStandardMaterial color={meshColor} emissive={emissiveColor} emissiveIntensity={emissiveIntensity} toneMapped={false} />
       </Box>
       {isDead && <pointLight position={[0, 1, 0]} intensity={5} distance={4} color="#ef4444" />}
@@ -214,7 +213,7 @@ const AmrMesh = React.memo(({ id, robotsRef }) => {
           {`${id} [${displayStatus}]\n${visualState.battery}%`}
         </Text>
       </Billboard>
-      <Box args={[0.5, 0.02, 0.5]} position={[0, 0.01, 0]} castShadow>
+      <Box args={[0.5, 0.02, 0.5]} position={[0, 0.01, 0]}>
         <meshBasicMaterial color={emissiveColor} transparent opacity={isDead ? 0.6 : 0.4} />
       </Box>
     </group>
@@ -225,12 +224,7 @@ const Scene = ({ robotIds, robotsRef, obstacles, chargingStations, targetBeacons
   return (
     <>
       <ambientLight intensity={0.65} color="#fef3c7" />
-      <directionalLight 
-        position={[15, 25, 15]} intensity={2.2} castShadow
-        shadow-mapSize-width={2048} shadow-mapSize-height={2048}
-        shadow-camera-near={0.1} shadow-camera-far={60} shadow-camera-left={-20}
-        shadow-camera-right={20} shadow-camera-top={20} shadow-camera-bottom={-20}
-      />
+      <directionalLight position={[15, 25, 15]} intensity={2.2} />
       <directionalLight position={[-12, 15, -12]} intensity={0.6} color="#93c5fd" />
       <gridHelper args={[GRID_SIZE, GRID_SIZE, '#475569', '#1e293b']} position={[0, 0, 0]} />
       
@@ -243,7 +237,7 @@ const Scene = ({ robotIds, robotsRef, obstacles, chargingStations, targetBeacons
           { x: 5,   width: 3.8 },
           { x: 12,  width: 5.8 }
         ].map((aisle, i) => (
-          <Plane key={`v-aisle-${i}`} args={[aisle.width, 29.8]} position={[aisle.x, 0, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+          <Plane key={`v-aisle-${i}`} args={[aisle.width, 29.8]} position={[aisle.x, 0, 0]} rotation={[-Math.PI / 2, 0, 0]}>
             <meshStandardMaterial 
               color="#0f2938" 
               emissive="#083344" 
@@ -256,7 +250,7 @@ const Scene = ({ robotIds, robotsRef, obstacles, chargingStations, targetBeacons
           </Plane>
         ))}
 
-        <Plane args={[29.8, 5.8]} position={[0, 0.001, -12]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+        <Plane args={[29.8, 5.8]} position={[0, 0.001, -12]} rotation={[-Math.PI / 2, 0, 0]}>
           <meshStandardMaterial 
             color="#062e24" 
             emissive="#064e3b" 
@@ -267,7 +261,7 @@ const Scene = ({ robotIds, robotsRef, obstacles, chargingStations, targetBeacons
             metalness={0.5} 
           />
         </Plane>
-        <Plane args={[29.8, 4.8]} position={[0, 0.001, 12.5]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+        <Plane args={[29.8, 4.8]} position={[0, 0.001, 12.5]} rotation={[-Math.PI / 2, 0, 0]}>
           <meshStandardMaterial 
             color="#062e24" 
             emissive="#064e3b" 
@@ -303,12 +297,9 @@ const Scene = ({ robotIds, robotsRef, obstacles, chargingStations, targetBeacons
 const SimulationCanvas = React.memo(({ robotIds, robotsRef, obstacles, chargingStations, targetBeacons, onFloorClick }) => {
   return (
     <div className="w-3/4 h-full relative">
-      <Canvas camera={{ position: [0, 24, 28], fov: 48 }} shadows={{ type: THREE.PCFShadowMap }} style={{ touchAction: 'none' }}>
+      <Canvas camera={{ position: [0, 24, 28], fov: 48 }} style={{ touchAction: 'none' }}>
         <color attach="background" args={['#030712']} />
         <Scene robotIds={robotIds} robotsRef={robotsRef} obstacles={obstacles} chargingStations={chargingStations} targetBeacons={targetBeacons} onFloorClick={onFloorClick} />
-        <EffectComposer disableNormalPass>
-          <Bloom luminanceThreshold={0.9} mipmapBlur intensity={1.6} />
-        </EffectComposer>
         <OrbitControls makeDefault target={[0, 0, 0]} enablePan={true} enableZoom={true} enableRotate={true} minPolarAngle={0} maxPolarAngle={Math.PI / 2 - 0.05} minZoom={5} maxZoom={60} />
       </Canvas>
       <div className="absolute top-4 left-4 text-[11px] font-mono text-neutral-400 bg-neutral-900/85 px-3 py-1.5 rounded border border-neutral-700 backdrop-blur shadow-lg flex items-center gap-2">
