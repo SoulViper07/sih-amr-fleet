@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls, Box, Text, Plane, Ring, Sphere, Cylinder, Billboard } from '@react-three/drei';
+import { OrbitControls, Box, Text, Plane, Ring, Sphere, Cylinder, Billboard, Shadow } from '@react-three/drei';
 import * as THREE from 'three';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -222,10 +222,8 @@ const AmrMesh = React.memo(({ id, robotsRef }) => {
           {`${id} [${displayStatus}]\n${visualState.battery}%`}
         </Text>
       </Billboard>
-      {/* 0-GPU Blob Shadow */}
-      <Plane args={[0.55, 0.55]} rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.14, 0]}>
-        <meshBasicMaterial color="#000000" transparent opacity={0.65} depthWrite={false} />
-      </Plane>
+      {/* 0-GPU Circular Faded Drop Shadow */}
+      <Shadow color="#000000" opacity={0.75} position={[0, -0.49, 0]} scale={0.85} />
     </group>
   );
 });
