@@ -566,7 +566,7 @@ export default function App() {
         if (data.time !== undefined) {
           const now = Date.now();
           if (now - lastRenderTime.current > 150) {
-            setTime(data.time);
+            setTime(prevTime => Math.max(prevTime, data.time));
             setTelemetryRobots({ ...robotsRef.current });
             lastRenderTime.current = now;
           }
