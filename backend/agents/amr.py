@@ -439,15 +439,32 @@ class AMRAgent:
         if not isinstance(path, list):
             return
 
+        self.prune_reservations(self.local_time)
+
+        # Remove previous reservations from this peer before adding new path
+        old_peer_path = getattr(self, "_peer_paths", {}).get(sender_id, [])
+        for ox, oy, ot in old_peer_path:
+            if ot in self.dynamic_reservations:
+                self.dynamic_reservations[ot].discard((ox, oy))
+                if not self.dynamic_reservations[ot]:
+                    del self.dynamic_reservations[ot]
+
+        if not hasattr(self, "_peer_paths"):
+            self._peer_paths = {}
+
         peer_path: list[State] = []
         for node in path:
             if not isinstance(node, (list, tuple)) or len(node) != 3:
                 continue
             x, y, t = node
+            if t < self.local_time:
+                continue
             peer_path.append((x, y, t))
             if t not in self.dynamic_reservations:
                 self.dynamic_reservations[t] = set()
             self.dynamic_reservations[t].add((x, y))
+
+        self._peer_paths[sender_id] = peer_path
 
         # Check for conflicts with our current path
         if self._check_conflict(peer_path):
@@ -617,6 +634,8 @@ class AMRAgent:
         """Process simulation tick: broadcast heartbeat, check vitality, update bidding and position."""
         if tick is not None:
             self.local_time = tick
+
+        self.prune_reservations(self.local_time)
 
         # Deactivated or crashed agents remain dead indefinitely until manual revive
         if self.status in ["DEAD", "OFFLINE"] or getattr(self, "_crashed", False):
@@ -939,6 +958,13 @@ class AMRAgent:
 
         self.plan_to_goal(x, y, is_replan=False, reason="dispatch")
 
+    def prune_reservations(self, current_tick: int | None = None) -> None:
+        """Purge all reservation entries where t < current_tick."""
+        ct = current_tick if current_tick is not None else self.local_time
+        expired = [t for t in list(self.dynamic_reservations.keys()) if t < ct]
+        for t in expired:
+            del self.dynamic_reservations[t]
+
     def plan_to_goal(
         self,
         goal_x: int,
@@ -968,11 +994,14 @@ class AMRAgent:
         self.goal = (goal_x, goal_y)
         start_x, start_y = self.current_pos
 
+        # Purge past reservations: t < self.local_time
+        self.prune_reservations(self.local_time)
+
         # Combine static obstacles with dynamic obstacles (dead robots, yielded spots) and solid peers
         solid_peers = {data["pos"] for data in self.peer_positions.values() if data.get("status") in ["DEAD", "DOCKED", "OFFLINE"] and "pos" in data}
         all_obstacles = self.obstacles | self.dynamic_obstacles | solid_peers
 
-        # Plan path starting from current local time with performance timing
+        # Plan path starting from current local time with performance timing and capped horizon
         t_start = time.perf_counter()
         path = time_space_astar(
             start=(start_x, start_y),
@@ -981,7 +1010,8 @@ class AMRAgent:
             grid_height=self.grid_size[1],
             static_obstacles=all_obstacles,
             dynamic_reservations=self.dynamic_reservations,
-            max_time=self.local_time + 100,  # Reasonable horizon
+            start_time=self.local_time,
+            max_time=self.local_time + 60,
             conflict_callback=self.metrics_collector.record_proactive_avoidance,
         )
         duration_ms = (time.perf_counter() - t_start) * 1000.0
@@ -997,7 +1027,11 @@ class AMRAgent:
             self.yield_cooldown = time.time() + 2.0
             return False
 
-        adjusted_path = [(x, y, t + self.local_time) for x, y, t in path]
+        if path and path[0][2] == 0 and self.local_time > 0:
+            adjusted_path = [(x, y, t + self.local_time) for x, y, t in path]
+        else:
+            adjusted_path = list(path)
+
         if len(adjusted_path) > 1 and (adjusted_path[0][0], adjusted_path[0][1]) == self.current_pos:
             self.current_path = list(adjusted_path[1:])
         else:

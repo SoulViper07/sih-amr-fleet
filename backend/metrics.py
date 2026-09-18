@@ -105,6 +105,16 @@ class FleetMetricsCollector:
         with self._lock:
             self.proactive_conflicts_avoided += 1
 
+    @property
+    def proactive_conflicts(self) -> int:
+        """Alias for proactive_conflicts_avoided."""
+        return self.proactive_conflicts_avoided
+
+    @proactive_conflicts.setter
+    def proactive_conflicts(self, val: int) -> None:
+        with self._lock:
+            self.proactive_conflicts_avoided = val
+
     def record_reactive_stop(self) -> None:
         """Record reactive stop/yield triggered by Layer 2 collision check."""
         with self._lock:

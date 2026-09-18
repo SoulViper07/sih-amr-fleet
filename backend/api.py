@@ -17,6 +17,8 @@ from pydantic import BaseModel
 from backend.metrics import FleetMetricsCollector, get_collector
 
 collector = get_collector()
+collector.proactive_conflicts = 0
+metrics_collector = collector
 
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
@@ -242,6 +244,7 @@ async def revive_fleet() -> dict[str, Any]:
     global mqtt_client, SABOTAGED_AGENTS
     SABOTAGED_AGENTS.clear()
     collector.silent_failures_detected = 0
+    collector.proactive_conflicts = 0
     if mqtt_client:
         payload = {"action": "revive"}
         mqtt_client.publish("amr/all/revive", json.dumps(payload), qos=1)
