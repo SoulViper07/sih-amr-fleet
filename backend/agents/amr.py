@@ -683,6 +683,31 @@ class AMRAgent:
                 self.task_start_time = time.time()
                 self.current_goal = (task["x"], task["y"])
                 self.goal = (task["x"], task["y"])
+
+                dist = abs(self.current_pos[0] - task["x"]) + abs(self.current_pos[1] - task["y"])
+                cost = float(self.bid_cost) if self.bid_cost is not None else float(dist + (100 - self.battery) * 0.1)
+                batt_val = int(round(self.battery))
+                agent_id_num = self.agent_id.replace("AMR-", "")
+                cnp_log_msg = f"[CNP AUCTION] AMR-{agent_id_num} claimed task | Cost: {cost:.1f} (dist: {dist}, batt: {batt_val}%)"
+                logger.info(cnp_log_msg)
+
+                try:
+                    auction_telemetry = {
+                        "agent_id": self.agent_id,
+                        "x": self.current_pos[0],
+                        "y": self.current_pos[1],
+                        "time": self.local_time,
+                        "battery": round(self.battery, 1),
+                        "priority": self.priority,
+                        "status": "CLAIMED",
+                        "bid_cost": cost,
+                        "dist": dist,
+                        "message": cnp_log_msg,
+                        "type": "CNP",
+                    }
+                    self.client.publish("fleet/telemetry", json.dumps(auction_telemetry), qos=1)
+                except Exception:
+                    pass
                 
                 self.plan_to_goal(task["x"], task["y"], is_replan=False, reason="task_assignment")
             
@@ -909,6 +934,8 @@ class AMRAgent:
             "created_at": time.time(),
         }
         self.task_start_time = time.time()
+        agent_id_num = self.agent_id.replace("AMR-", "")
+        logger.info(f"[WMS RFP] Injected task contract @ ({x}, {y}) -> Auction awarded to AMR-{agent_id_num}")
 
         self.plan_to_goal(x, y, is_replan=False, reason="dispatch")
 

@@ -266,7 +266,20 @@ async def create_task(request: TaskRequest) -> dict[str, Any]:
     }
     PENDING_TASKS.append(task)
     collector.record_task_created()
-    logger.info(f"New task created at ({request.x}, {request.y})")
+    rfp_msg = f"[TASK RFP] Broadcasted target @ ({request.x}, {request.y}) to fleet auction pool"
+    logger.info(rfp_msg)
+    if mqtt_client:
+        rfp_telemetry = {
+            "type": "TASK_RFP",
+            "status": "RFP",
+            "agent_id": "SWARM",
+            "x": request.x,
+            "y": request.y,
+            "task_id": task_id,
+            "message": rfp_msg,
+            "time": latest_sim_tick,
+        }
+        mqtt_client.publish("fleet/telemetry", json.dumps(rfp_telemetry), qos=1)
     return {"status": "task_broadcasted", "task": task}
 
 
@@ -297,7 +310,19 @@ async def dispatch_agent(agent_id: str, request: DispatchRequest) -> dict[str, A
     payload = {"x": request.x, "y": request.y}
     topic = f"fleet/dispatch/{agent_id}"
     mqtt_client.publish(topic, json.dumps(payload), qos=1)
-    logger.info(f"Dispatched {agent_id} to ({request.x}, {request.y})")
+    agent_id_num = agent_id.replace("AMR-", "")
+    dispatch_msg = f"[WMS RFP] Injected task contract @ ({request.x}, {request.y}) -> Auction awarded to AMR-{agent_id_num}"
+    logger.info(dispatch_msg)
+    dispatch_telemetry = {
+        "type": "DISPATCH",
+        "status": "CNP",
+        "agent_id": f"AMR-{agent_id_num}",
+        "x": request.x,
+        "y": request.y,
+        "message": dispatch_msg,
+        "time": latest_sim_tick,
+    }
+    mqtt_client.publish("fleet/telemetry", json.dumps(dispatch_telemetry), qos=1)
 
     return {"status": "dispatched", "agent": agent_id, "target": [request.x, request.y]}
 

@@ -442,7 +442,7 @@ const DashboardPanel = ({ robotIds, robots, time, simStartTime, isConnected, sel
 
       <div className="mb-3 bg-[#1f1614] rounded-lg border border-[#d4af37]/20 p-2.5 flex-shrink-0">
         <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-1.5"><Target className="w-3.5 h-3.5 text-[#d4af37]" /><h3 className="font-semibold text-[#d4af37] text-xs">DISPATCH SELECTOR</h3></div>
+          <div className="flex items-center gap-1.5"><Target className="w-3.5 h-3.5 text-[#d4af37]" /><h3 className="font-semibold text-[#d4af37] text-xs">TASK INJECTOR (CNP POOL)</h3></div>
           <span className="text-[9px] text-[#f5f5dc]/60">CLICK FLOOR TO DEPLOY</span>
         </div>
         <div className="grid grid-cols-3 gap-1.5">
@@ -515,31 +515,48 @@ const DashboardPanel = ({ robotIds, robots, time, simStartTime, isConnected, sel
           <AnimatePresence initial={false}>
             {logs.map((log) => {
               if (typeof log === 'object' && log !== null) {
-                const isOffline = log.status === 'OFFLINE' || log.type === 'OFFLINE';
-                const isBid = log.status === 'BIDDING' || log.type === 'AUCTION_BID';
-                const isClaim = log.status === 'CLAIMED' || log.type === 'AUCTION_WIN';
-                const isYield = log.status === 'YIELDING' || log.type === 'COLLISION_AVOID';
-                const isDead = log.status === 'DEAD' || log.type === 'FAILURE';
-                const isDispatch = log.type === 'DISPATCH';
-                const isRecovery = log.status === 'RECOVERY' || log.type === 'RECOVERY';
+                const isRfp = log.status === 'RFP' || log.type === 'TASK_RFP' || (typeof log.message === 'string' && log.message.includes('[TASK RFP]'));
+                const isCnp = !isRfp && (
+                  log.status === 'CNP' || log.type === 'CNP' || log.type === 'DISPATCH' ||
+                  log.status === 'BIDDING' || log.type === 'AUCTION_BID' ||
+                  log.status === 'CLAIMED' || log.type === 'AUCTION_WIN' ||
+                  (typeof log.message === 'string' && (log.message.includes('[CNP') || log.message.includes('[WMS RFP]')))
+                );
+                const isYield = log.status === 'YIELDING' || log.type === 'COLLISION_AVOID' || (typeof log.message === 'string' && log.message.toLowerCase().includes('yield'));
+                const isDead = log.status === 'DEAD' || log.status === 'OFFLINE' || log.type === 'FAILURE' || (typeof log.message === 'string' && (log.message.includes('DEAD') || log.message.includes('OFFLINE') || log.message.includes('CRITICAL FAILURE')));
+                const isRevive = log.status === 'REVIVE' || log.status === 'RECOVERY' || log.type === 'REVIVE' || log.type === 'RECOVERY' || (typeof log.message === 'string' && (log.message.includes('REVIVE') || log.message.toLowerCase().includes('revived') || log.message.includes('RECOVERY')));
 
                 let containerStyle = 'bg-[#1a1311] border-[#d4af37]/20 text-[#f5f5dc]';
                 let tagStyle = 'bg-[#120d0b] text-[#f5f5dc]/70 border-[#d4af37]/20';
-                let tagText = log.status || log.type || 'INFO';
+                let tagText = `[${log.status || log.type || 'INFO'}]`;
 
-                if (isOffline) { containerStyle = 'bg-rose-950/50 border-rose-600/60 text-rose-200 shadow-[0_0_10px_rgba(244,63,94,0.2)]'; tagStyle = 'bg-rose-500/20 text-rose-300 border-rose-500/50'; tagText = 'OFFLINE'; }
-                else if (isBid) { containerStyle = 'bg-cyan-950/50 border-cyan-500/60 text-cyan-200 shadow-[0_0_10px_rgba(6,182,212,0.2)]'; tagStyle = 'bg-cyan-500/20 text-cyan-300 border-cyan-400/50'; tagText = 'BIDDING'; }
-                else if (isClaim) { containerStyle = 'bg-yellow-950/50 border-yellow-500/60 text-yellow-200 shadow-[0_0_10px_rgba(234,179,8,0.2)]'; tagStyle = 'bg-yellow-500/20 text-yellow-300 border-yellow-400/50'; tagText = 'CLAIMED'; }
-                else if (isYield) { containerStyle = 'bg-amber-950/40 border-amber-600/50 text-amber-200'; tagStyle = 'bg-amber-500/20 text-amber-300 border-amber-500/50'; tagText = 'YIELD'; }
-                else if (isDead) { containerStyle = 'bg-red-950/50 border-red-600/60 text-red-200 shadow-[0_0_10px_rgba(239,68,68,0.2)]'; tagStyle = 'bg-red-500/20 text-red-300 border-red-500/50'; tagText = 'FAILURE'; }
-                else if (isRecovery) { containerStyle = 'bg-emerald-950/50 border-emerald-500/60 text-emerald-200 shadow-[0_0_10px_rgba(16,185,129,0.2)]'; tagStyle = 'bg-emerald-500/20 text-emerald-300 border-emerald-400/50'; tagText = 'RECOVERY'; }
-                else if (isDispatch) { containerStyle = 'bg-purple-950/40 border-purple-500/50 text-purple-200'; tagStyle = 'bg-purple-500/20 text-purple-300 border-purple-400/50'; tagText = 'DISPATCH'; }
+                if (isRfp) {
+                  containerStyle = 'bg-cyan-950/40 border-cyan-800/60 text-cyan-200 shadow-[0_0_10px_rgba(6,182,212,0.15)]';
+                  tagStyle = 'text-cyan-400 border-cyan-800 bg-cyan-950/40';
+                  tagText = '[TASK RFP]';
+                } else if (isCnp) {
+                  containerStyle = 'bg-cyan-950/40 border-cyan-800/60 text-cyan-200 shadow-[0_0_10px_rgba(6,182,212,0.15)]';
+                  tagStyle = 'text-cyan-400 border-cyan-800 bg-cyan-950/40';
+                  tagText = '[CNP]';
+                } else if (isYield) {
+                  containerStyle = 'bg-amber-950/40 border-amber-800/60 text-amber-200';
+                  tagStyle = 'text-amber-400 border-amber-800 bg-amber-950/40';
+                  tagText = '[YIELD]';
+                } else if (isDead) {
+                  containerStyle = 'bg-rose-950/40 border-rose-800/60 text-rose-200 shadow-[0_0_10px_rgba(244,63,94,0.15)]';
+                  tagStyle = 'text-rose-400 border-rose-800 bg-rose-950/40';
+                  tagText = (log.status === 'DEAD' || (typeof log.message === 'string' && log.message.includes('DEAD'))) ? '[DEAD]' : '[FAIL]';
+                } else if (isRevive) {
+                  containerStyle = 'bg-emerald-950/40 border-emerald-800/60 text-emerald-200 shadow-[0_0_10px_rgba(16,185,129,0.15)]';
+                  tagStyle = 'text-emerald-400 border-emerald-800 bg-emerald-950/40';
+                  tagText = '[REVIVE]';
+                }
 
                 return (
                   <motion.div key={log.id} initial={{ opacity: 0, y: -6, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} transition={{ duration: 0.2 }} className={`p-1.5 rounded border text-[9.5px] leading-tight ${containerStyle}`}>
                     <div className="flex items-center justify-between mb-0.5 text-[8px] opacity-90 font-bold">
                       <span>[T+{formatLogTime(log, simStartTime, time)}] {log.agentId ? `AGENT ${log.agentId}` : 'SWARM_EVENT'}</span>
-                      <span className={`px-1 py-0.2 rounded border font-mono ${tagStyle}`}>{tagText}</span>
+                      <span className={`px-1.5 py-0.5 rounded border font-mono font-bold ${tagStyle}`}>{tagText}</span>
                     </div>
                     <div className="font-mono">{log.message}</div>
                   </motion.div>
@@ -653,9 +670,9 @@ export default function App() {
         time: currentTick,
         tick: currentTick,
         agentId: "ALL",
-        status: "ACTIVE",
-        type: "RECOVERY",
-        message: "Manual fleet override: All bots restored to service",
+        status: "REVIVE",
+        type: "REVIVE",
+        message: "[REVIVE] Manual fleet override: All bots restored to service",
         color: "emerald"
       }, ...prev].slice(0, 25));
     } catch (err) {
@@ -701,6 +718,24 @@ export default function App() {
           setMetrics(data.metrics);
         }
 
+        if (data.type === "TASK_RFP" || data.type === "DISPATCH" || data.type === "CNP") {
+          const isRfp = data.type === "TASK_RFP";
+          const incomingMsg = data.message || (isRfp ? `[TASK RFP] Broadcasted target @ (${data.x}, ${data.y}) to fleet auction pool` : `[CNP AUCTION] ${data.agent_id || 'AMR'} claimed task`);
+          setLogs(prevLogs => {
+            if (prevLogs.some(l => l.message === incomingMsg)) return prevLogs;
+            return [{
+              id: `${data.type}-${Date.now()}-${Math.random()}`,
+              time: eventTime,
+              tick: eventTick,
+              agentId: isRfp ? null : data.agent_id,
+              status: isRfp ? "RFP" : "CNP",
+              type: isRfp ? "TASK_RFP" : "CNP",
+              message: incomingMsg,
+              color: "cyan",
+            }, ...prevLogs].slice(0, 25);
+          });
+        }
+
         if (data.agent_id) {
           const prevBot = robotsRef.current[data.agent_id] || {};
           const prevStatus = prevBot.status;
@@ -726,9 +761,10 @@ export default function App() {
           const rawStatus = (data.status || "").toUpperCase();
           if (rawStatus !== "MOVING" && rawStatus !== "IDLE" && status !== prevStatus) {
             if (status === "BIDDING") {
-              setLogs(prevLogs => [{ id: `${eventTick}-${data.agent_id}-bid-${Date.now()}`, time: eventTime, tick: eventTick, agentId: data.agent_id, status: "BIDDING", type: "AUCTION_BID", message: `[${data.agent_id}] ⚡ BROADCAST BID: Estimating dynamic time-space cost`, color: "cyan" }, ...prevLogs].slice(0, 25));
+              setLogs(prevLogs => [{ id: `${eventTick}-${data.agent_id}-bid-${Date.now()}`, time: eventTime, tick: eventTick, agentId: data.agent_id, status: "CNP", type: "CNP", message: `[${data.agent_id}] ⚡ BROADCAST BID: Estimating dynamic time-space cost`, color: "cyan" }, ...prevLogs].slice(0, 25));
             } else if (status === "CLAIMED") {
-              setLogs(prevLogs => [{ id: `${eventTick}-${data.agent_id}-claim-${Date.now()}`, time: eventTime, tick: eventTick, agentId: data.agent_id, status: "CLAIMED", type: "AUCTION_WIN", message: `[${data.agent_id}] 🏆 AUCTION WON: Task claimed`, color: "gold" }, ...prevLogs].slice(0, 25));
+              const claimMsg = data.message || `[CNP AUCTION] ${data.agent_id} claimed task`;
+              setLogs(prevLogs => [{ id: `${eventTick}-${data.agent_id}-claim-${Date.now()}`, time: eventTime, tick: eventTick, agentId: data.agent_id, status: "CNP", type: "CNP", message: claimMsg, color: "cyan" }, ...prevLogs].slice(0, 25));
             } else if (status === "YIELDING" && !activeYields.current.has(data.agent_id)) {
               activeYields.current.add(data.agent_id);
               setLogs(prevLogs => [{ id: `${eventTick}-${data.agent_id}-yield-${Date.now()}`, time: eventTime, tick: eventTick, agentId: data.agent_id, status: "YIELDING", type: "COLLISION_AVOID", message: `[${data.agent_id}] Yielding right-of-way to higher-priority node`, color: "orange" }, ...prevLogs].slice(0, 25));
@@ -795,7 +831,30 @@ export default function App() {
 
     const beaconId = Date.now();
     setTargetBeacons(prev => [...prev.filter(b => Date.now() - b.id < 5000), { x: clampedX, y: clampedY, id: beaconId }]);
-    setLogs(prev => [{ id: `${beaconId}-dispatch`, time: timeRef.current, tick: timeRef.current, agentId: selectedAgentRef.current, status: "DISPATCH", type: "DISPATCH", message: `[OPERATOR] Dispatched task target @ (${clampedX}, ${clampedY})`, color: "purple" }, ...prev].slice(0, 25));
+    const agentNum = selectedAgentRef.current ? selectedAgentRef.current.replace("AMR-", "") : "1";
+    setLogs(prev => [
+      {
+        id: `${beaconId}-wms`,
+        time: timeRef.current,
+        tick: timeRef.current,
+        agentId: selectedAgentRef.current,
+        status: "CNP",
+        type: "CNP",
+        message: `[WMS RFP] Injected task contract @ (${clampedX}, ${clampedY}) -> Auction awarded to AMR-${agentNum}`,
+        color: "cyan"
+      },
+      {
+        id: `${beaconId}-rfp`,
+        time: timeRef.current,
+        tick: timeRef.current,
+        agentId: null,
+        status: "RFP",
+        type: "TASK_RFP",
+        message: `[TASK RFP] Broadcasted target @ (${clampedX}, ${clampedY}) to fleet auction pool`,
+        color: "cyan"
+      },
+      ...prev
+    ].slice(0, 25));
 
     try { await axios.post(`${API_URL}/api/tasks`, { x: clampedX, y: clampedY }); } catch { /* ignore */ }
     try {
