@@ -99,6 +99,25 @@ class AMRAgent:
     def position(self, pos: tuple[int, int]) -> None:
         self.current_pos = pos
 
+    @property
+    def path(self) -> list:
+        """Return current path buffer."""
+        return self.current_path
+
+    @path.setter
+    def path(self, val: list) -> None:
+        self.current_path = list(val)
+
+    @property
+    def target(self) -> tuple[int, int] | None:
+        """Return current target/goal coordinate."""
+        return self.current_goal
+
+    @target.setter
+    def target(self, val: tuple[int, int] | None) -> None:
+        self.current_goal = val
+        self.goal = val
+
     def connect(self, broker: str = "broker.emqx.io", port: int = 1883) -> None:
         """Connect to MQTT broker and start network loop.
 
@@ -126,6 +145,9 @@ class AMRAgent:
             client.subscribe("fleet/telemetry", qos=1)
             client.subscribe("amr/+/heartbeat", qos=1)
             client.subscribe(f"fleet/dispatch/{self.agent_id}", qos=1)
+            client.subscribe(f"amr/{self.agent_id}/sabotage", qos=1)
+            client.subscribe(f"fleet/sabotage/{self.agent_id}", qos=1)
+            client.subscribe("fleet/sabotage", qos=1)
 
     def _on_disconnect(self, client: mqtt.Client, userdata: object, rc: int) -> None:
         """Callback for when the client disconnects from the broker."""
@@ -145,6 +167,15 @@ class AMRAgent:
         except json.JSONDecodeError:
             return
 
+        if (
+            topic == f"amr/{self.agent_id}/sabotage"
+            or topic == f"fleet/sabotage/{self.agent_id}"
+            or topic == "fleet/sabotage"
+            or (topic.startswith("amr/") and topic.endswith("/sabotage"))
+        ):
+            self._handle_sabotage(payload)
+            return
+
         if topic == "fleet/intents":
             self._handle_intent(payload)
         elif topic == "fleet/telemetry":
@@ -158,8 +189,69 @@ class AMRAgent:
         elif topic.startswith("fleet/dispatch/"):
             self._handle_dispatch(payload)
 
+    def _handle_sabotage(self, payload: dict | None = None) -> None:
+        """Handle sabotage / kill command from MQTT message."""
+        if payload and payload.get("agent_id") and payload.get("agent_id") != self.agent_id:
+            return
+        self.kill()
+
+    def sabotage(self) -> None:
+        """Permanently sabotage and deactivate the AMR."""
+        self.kill()
+
+    def kill(self) -> None:
+        """Enforce strict, permanent agent deactivation upon sabotage or kill command."""
+        self.status = "DEAD"
+        self._crashed = True
+        self.current_path = []
+        self.current_goal = None
+        self.goal = None
+        self.intended_next_pos = None
+
+        # If holding an active task, mark it unassigned/failed so CNP can salvage it
+        if self.active_task is not None:
+            task = self.active_task
+            task["claimed"] = False
+            task["claimed_by"] = None
+            task["status"] = "PENDING"
+            task["state"] = "PENDING"
+            self.metrics_collector.record_task_failed()
+            self.tasks_failed += 1
+            self.active_task = None
+
+        # Clear any pending task bidding state
+        if self.pending_task is not None:
+            self.pending_task["claimed"] = False
+            self.pending_task["claimed_by"] = None
+            self.pending_task["status"] = "PENDING"
+            self.pending_task["state"] = "PENDING"
+            self.pending_task = None
+            self.bid_cost = None
+            self.bid_broadcast_time = None
+
+        # Immediately publish terminal DEAD telemetry to inform peers and frontend
+        try:
+            terminal_telemetry = {
+                "agent_id": self.agent_id,
+                "x": self.current_pos[0],
+                "y": self.current_pos[1],
+                "time": self.local_time,
+                "battery": round(self.battery, 1),
+                "priority": self.priority,
+                "status": "DEAD",
+                "intended_next_pos": None,
+                "next_pos": self.current_pos,
+            }
+            self.client.publish("fleet/telemetry", json.dumps(terminal_telemetry), qos=1)
+        except Exception:
+            pass
+
+        logger.warning(f"Agent '{self.agent_id}' permanently deactivated (status=DEAD, _crashed=True)")
+
     def _handle_telemetry(self, payload: dict) -> None:
         """Track live position and intent of peer robots."""
+        if self.status in ["DEAD", "OFFLINE"] or getattr(self, "_crashed", False):
+            return
         sender_id = payload.get("agent_id")
         if not sender_id or sender_id == self.agent_id:
             return
@@ -187,6 +279,8 @@ class AMRAgent:
 
     def _handle_heartbeat(self, payload: dict) -> None:
         """Track heartbeat and vitality of peer robots."""
+        if self.status in ["DEAD", "OFFLINE"] or getattr(self, "_crashed", False):
+            return
         sender_id = payload.get("agent_id")
         if not sender_id or sender_id == self.agent_id:
             return
@@ -217,6 +311,8 @@ class AMRAgent:
         Args:
             payload: JSON payload containing sender_id, path, and priority.
         """
+        if self.status in ["DEAD", "OFFLINE"] or getattr(self, "_crashed", False):
+            return
         sender_id = payload.get("sender_id")
         path = payload.get("path", [])
         sender_priority = payload.get("priority", 1)
@@ -297,6 +393,8 @@ class AMRAgent:
         Args:
             payload: JSON payload containing sender_id, task, bid_cost, and priority.
         """
+        if self.status in ["DEAD", "OFFLINE"] or getattr(self, "_crashed", False):
+            return
         sender_id = payload.get("sender_id")
         task = payload.get("task")
         sender_bid_cost = payload.get("bid_cost")
@@ -354,7 +452,7 @@ class AMRAgent:
 
     def publish_heartbeat(self, tick: int | None = None) -> None:
         """Publish heartbeat payload to amr/{agent_id}/heartbeat."""
-        if self._crashed:
+        if self.status in ["DEAD", "OFFLINE"] or getattr(self, "_crashed", False):
             return
         current_tick = self.local_time if tick is None else tick
         payload = {
@@ -378,6 +476,8 @@ class AMRAgent:
         Returns:
             List of newly identified offline peer agent IDs.
         """
+        if self.status in ["DEAD", "OFFLINE"] or getattr(self, "_crashed", False):
+            return []
         newly_offline = []
         for peer_id, last_tick in list(self.peer_last_seen_tick.items()):
             if peer_id == self.agent_id:
@@ -429,7 +529,7 @@ class AMRAgent:
 
     def step(self, tick: int | None = None) -> None:
         """Process simulation tick: broadcast heartbeat, check vitality, update bidding and position."""
-        if self._crashed:
+        if self.status in ["DEAD", "OFFLINE"] or getattr(self, "_crashed", False):
             return
         if tick is not None:
             self.local_time = tick
@@ -449,13 +549,15 @@ class AMRAgent:
         Args:
             payload: JSON payload containing current simulation time.
         """
-        if self._crashed:
+        if self.status in ["DEAD", "OFFLINE"] or getattr(self, "_crashed", False):
             return
         tick = payload.get("time", self.local_time)
         self.step(tick)
 
     def _process_tick(self) -> None:
         """Internal routine executing bidding, movement, charging, and telemetry for the current tick."""
+        if self.status in ["DEAD", "OFFLINE"] or getattr(self, "_crashed", False):
+            return
         current_time = time.time()
 
         # Sabotage check - only poll if explicitly enabled via environment variable
@@ -464,7 +566,8 @@ class AMRAgent:
             try:
                 res = requests.get("http://localhost:8000/api/sabotage/status", timeout=0.2)
                 if self.agent_id in res.json().get("sabotaged", []):
-                    self.status = "DEAD"
+                    self.kill()
+                    return
                 self._backend_available = True
             except Exception:
                 self._backend_available = False
@@ -477,8 +580,14 @@ class AMRAgent:
                 self.status = "DOCKED" if self.current_pos in self.CHARGING_STATIONS else "ACTIVE"
 
         # Check if we won the bid (wait 1 tick after broadcasting)
-        if (self.status in ["DOCKED", "ACTIVE"] and self.pending_task and self.bid_broadcast_time is not None 
-            and self.local_time > self.bid_broadcast_time):
+        if (
+            self.status not in ["DEAD", "OFFLINE"]
+            and not getattr(self, "_crashed", False)
+            and self.status in ["DOCKED", "ACTIVE"]
+            and self.pending_task
+            and self.bid_broadcast_time is not None 
+            and self.local_time > self.bid_broadcast_time
+        ):
             task = self.pending_task
             if not task.get("claimed", False) or task.get("claimed_by") == self.agent_id:
                 task["claimed"] = True
@@ -496,7 +605,12 @@ class AMRAgent:
             self.bid_broadcast_time = None
 
         # Edge-AI Bidding Logic: Poll for tasks when DOCKED or ACTIVE (only if not currently bidding)
-        if self.status in ["DOCKED", "ACTIVE"] and self.pending_task is None:
+        if (
+            self.status not in ["DEAD", "OFFLINE"]
+            and not getattr(self, "_crashed", False)
+            and self.status in ["DOCKED", "ACTIVE"]
+            and self.pending_task is None
+        ):
             tasks = []
             if self.task_provider is not None:
                 try:
@@ -633,7 +747,8 @@ class AMRAgent:
             self.battery = max(0.0, self.battery - 0.1)
             
             if self.battery == 0:
-                self.status = "DEAD"
+                self.kill()
+                return
             # 3. Autonomous Return-to-Base at 20%
             elif self.battery <= 20.0 and self.current_goal not in self.CHARGING_STATIONS:
                 # Find docks not currently occupied by resting peers
@@ -668,7 +783,7 @@ class AMRAgent:
 
     def publish_telemetry(self) -> None:
         """Publish telemetry with status, intended next position, and next_pos."""
-        if self._crashed:
+        if self.status in ["DEAD", "OFFLINE"] or getattr(self, "_crashed", False):
             return
         next_step_pos = (self.current_path[0][0], self.current_path[0][1]) if self.current_path else self.current_pos
         telemetry = {
@@ -690,7 +805,7 @@ class AMRAgent:
         Args:
             payload: JSON payload containing x and y coordinates.
         """
-        if self._crashed or self.status in ["DEAD", "OFFLINE"]:
+        if self.status in ["DEAD", "OFFLINE"] or getattr(self, "_crashed", False):
             return
         x = payload.get("x")
         y = payload.get("y")
@@ -729,7 +844,7 @@ class AMRAgent:
         Returns:
             True if path found, False otherwise.
         """
-        if self._crashed or self.status in ["DEAD", "OFFLINE"]:
+        if self.status in ["DEAD", "OFFLINE"] or getattr(self, "_crashed", False):
             return False
 
         if self.status in ["DOCKED", "IDLE", "ACTIVE"]:

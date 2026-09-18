@@ -191,9 +191,23 @@ async def get_sabotage_status() -> dict[str, Any]:
 @app.post("/api/sabotage/{agent_id}")
 async def sabotage_agent(agent_id: str) -> dict[str, Any]:
     """Sabotage an agent (mark as dead)."""
+    global mqtt_client
     if agent_id not in SABOTAGED_AGENTS:
         SABOTAGED_AGENTS.append(agent_id)
         logger.info(f"Agent {agent_id} sabotaged!")
+    if mqtt_client:
+        payload = {"agent_id": agent_id, "action": "sabotage"}
+        mqtt_client.publish(f"amr/{agent_id}/sabotage", json.dumps(payload), qos=1)
+        mqtt_client.publish(f"fleet/sabotage/{agent_id}", json.dumps(payload), qos=1)
+        mqtt_client.publish(
+            "fleet/telemetry",
+            json.dumps({
+                "agent_id": agent_id,
+                "status": "DEAD",
+                "time": time.time(),
+            }),
+            qos=1,
+        )
     return {"status": "success", "sabotaged": agent_id, "all_sabotaged": SABOTAGED_AGENTS}
 
 
