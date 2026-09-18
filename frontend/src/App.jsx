@@ -358,7 +358,41 @@ const SimulationCanvas = React.memo(({ robotIds, robotsRef, obstacles, chargingS
   );
 });
 
-const DashboardPanel = ({ robotIds, robots, time, isConnected, selectedAgent, setSelectedAgent, logs, onSabotage, onReviveFleet }) => {
+const formatTimerDisplay = (timestamp, simStartTime) => {
+  const rawElapsed = (typeof timestamp === "number" && timestamp > 1000000000)
+    ? (simStartTime ? (timestamp - simStartTime) : 0)
+    : (timestamp || 0);
+  const safeElapsed = Math.max(0, typeof rawElapsed === "number" ? rawElapsed : parseFloat(rawElapsed) || 0);
+  const mins = Math.floor(safeElapsed / 60).toString().padStart(2, '0');
+  const secs = Math.floor(safeElapsed % 60).toString().padStart(2, '0');
+  return `T+${mins}:${secs}`;
+};
+
+const formatLogTime = (log, simStartTime, fallbackTime = 0) => {
+  if (log && log.tick !== undefined && log.tick !== null) {
+    const tickNum = typeof log.tick === 'number' ? log.tick : parseFloat(log.tick);
+    if (!isNaN(tickNum)) {
+      if (tickNum > 1000000000) {
+        const rawElapsed = simStartTime ? Math.max(0, tickNum - simStartTime) : 0;
+        return `${rawElapsed.toFixed(1)}s`;
+      }
+      return Number.isInteger(tickNum) ? String(tickNum).padStart(3, '0') : `${Math.max(0, tickNum).toFixed(1)}s`;
+    }
+  }
+
+  const timestamp = (log && (log.time !== undefined ? log.time : log.timestamp)) ?? fallbackTime;
+  const num = typeof timestamp === 'number' ? timestamp : parseFloat(timestamp);
+  if (isNaN(num)) return '000';
+
+  if (num > 1000000000) {
+    const rawElapsed = simStartTime ? Math.max(0, num - simStartTime) : 0;
+    return `${rawElapsed.toFixed(1)}s`;
+  }
+
+  return Number.isInteger(num) ? String(num).padStart(3, '0') : `${Math.max(0, num).toFixed(1)}s`;
+};
+
+const DashboardPanel = ({ robotIds, robots, time, simStartTime, isConnected, selectedAgent, setSelectedAgent, logs, onSabotage, onReviveFleet }) => {
   const getBatteryColor = (level) => {
     if (level > 50) return 'bg-emerald-500';
     if (level > 20) return 'bg-amber-500';
@@ -401,7 +435,7 @@ const DashboardPanel = ({ robotIds, robots, time, isConnected, selectedAgent, se
           </div>
           <div className="flex items-center gap-1 bg-[#1f1614] px-2 py-1 rounded-lg border border-[#d4af37]/30">
             <Clock className="w-3 h-3 text-[#d4af37]" />
-            <span className="text-sm font-mono tabular-nums text-[#fffff0]">T+{String(time).padStart(3, '0')}</span>
+            <span className="text-sm font-mono tabular-nums text-[#fffff0]">{formatTimerDisplay(time, simStartTime)}</span>
           </div>
         </div>
       </div>
@@ -504,7 +538,7 @@ const DashboardPanel = ({ robotIds, robots, time, isConnected, selectedAgent, se
                 return (
                   <motion.div key={log.id} initial={{ opacity: 0, y: -6, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} transition={{ duration: 0.2 }} className={`p-1.5 rounded border text-[9.5px] leading-tight ${containerStyle}`}>
                     <div className="flex items-center justify-between mb-0.5 text-[8px] opacity-90 font-bold">
-                      <span>[T+{log.time ?? time}] {log.agentId ? `AGENT ${log.agentId}` : 'SWARM_EVENT'}</span>
+                      <span>[T+{formatLogTime(log, simStartTime, time)}] {log.agentId ? `AGENT ${log.agentId}` : 'SWARM_EVENT'}</span>
                       <span className={`px-1 py-0.2 rounded border font-mono ${tagStyle}`}>{tagText}</span>
                     </div>
                     <div className="font-mono">{log.message}</div>
@@ -527,6 +561,8 @@ export default function App() {
   const [robotIds, setRobotIds] = useState([]);
   const [telemetryRobots, setTelemetryRobots] = useState({});
   const [time, setTime] = useState(0);
+  const [simStartTime, setSimStartTime] = useState(null);
+  const simStartTimeRef = useRef(null);
   const [isConnected, setIsConnected] = useState(false);
   const [selectedAgent, setSelectedAgent] = useState('AMR-1');
   const [obstacles, setObstacles] = useState([]);
@@ -577,7 +613,17 @@ export default function App() {
       await fetch(`${API_URL}/api/sabotage/${agentId}`, { method: 'POST' });
       if (robotsRef.current[agentId]) robotsRef.current[agentId].status = 'DEAD';
       setTelemetryRobots({ ...robotsRef.current });
-      setLogs(prev => [{ id: `${Date.now()}-${agentId}-sabotage`, time: robotsRef.current[agentId]?.time ?? 0, agentId: agentId, status: "DEAD", type: "FAILURE", message: `[SABOTAGE] ⚠️ Manual override: ${agentId} neutralized -> Dynamic obstacle active on grid`, color: "red" }, ...prev].slice(0, 25));
+      const currentTick = timeRef.current;
+      setLogs(prev => [{
+        id: `${Date.now()}-${agentId}-sabotage`,
+        time: currentTick,
+        tick: currentTick,
+        agentId: agentId,
+        status: "DEAD",
+        type: "FAILURE",
+        message: `[SABOTAGE] ⚠️ Manual override: ${agentId} neutralized -> Dynamic obstacle active on grid`,
+        color: "red"
+      }, ...prev].slice(0, 25));
     } catch {
       // ignore
     }
@@ -594,9 +640,11 @@ export default function App() {
       setTelemetryRobots({ ...robotsRef.current });
       setToastMessage("Fleet Restored: All AMRs Revived");
       setTimeout(() => setToastMessage(null), 3500);
+      const currentTick = timeRef.current;
       setLogs(prev => [{
         id: `${Date.now()}-fleet-revive`,
-        time: time,
+        time: currentTick,
+        tick: currentTick,
         agentId: "ALL",
         status: "ACTIVE",
         type: "RECOVERY",
@@ -613,13 +661,33 @@ export default function App() {
       wsRef.current = new WebSocket(WS_URL);
     }
     const ws = wsRef.current;
-    ws.onopen = () => setIsConnected(true);
+    ws.onopen = () => {
+      setIsConnected(true);
+      if (!simStartTimeRef.current) {
+        const nowSec = Date.now() / 1000;
+        simStartTimeRef.current = nowSec;
+        setSimStartTime(nowSec);
+      }
+    };
     ws.onclose = () => setIsConnected(false);
 
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        const simTime = data.time ?? 0;
+        if (!simStartTimeRef.current) {
+          const initialTime = (typeof data.time === 'number' && data.time > 1000000000)
+            ? data.time
+            : Date.now() / 1000;
+          simStartTimeRef.current = initialTime;
+          setSimStartTime(initialTime);
+        }
+
+        const eventTick = data.tick !== undefined
+          ? data.tick
+          : (typeof data.time === 'number' && data.time < 1000000000 ? data.time : timeRef.current);
+        const eventTime = (typeof data.time === 'number' && data.time > 1000000000)
+          ? (simStartTimeRef.current ? Math.max(0, data.time - simStartTimeRef.current) : timeRef.current)
+          : (data.time ?? eventTick);
 
         // Extract metrics if provided by backend broadcast
         if (data.metrics) {
@@ -634,6 +702,8 @@ export default function App() {
 
           robotsRef.current[data.agent_id] = {
             ...prev, ...data, status,
+            time: eventTick,
+            tick: eventTick,
             battery: data.battery ?? prev?.battery ?? 100,
             priority: data.priority ?? prev?.priority ?? 1,
           };
@@ -643,32 +713,40 @@ export default function App() {
           const rawStatus = (data.status || "").toUpperCase();
           if (rawStatus !== "MOVING" && rawStatus !== "IDLE" && status !== prevStatus) {
             if (status === "BIDDING") {
-              setLogs(prevLogs => [{ id: `${simTime}-${data.agent_id}-bid-${Date.now()}`, time: simTime, agentId: data.agent_id, status: "BIDDING", type: "AUCTION_BID", message: `[${data.agent_id}] ⚡ BROADCAST BID: Estimating dynamic time-space cost`, color: "cyan" }, ...prevLogs].slice(0, 25));
+              setLogs(prevLogs => [{ id: `${eventTick}-${data.agent_id}-bid-${Date.now()}`, time: eventTime, tick: eventTick, agentId: data.agent_id, status: "BIDDING", type: "AUCTION_BID", message: `[${data.agent_id}] ⚡ BROADCAST BID: Estimating dynamic time-space cost`, color: "cyan" }, ...prevLogs].slice(0, 25));
             } else if (status === "CLAIMED") {
-              setLogs(prevLogs => [{ id: `${simTime}-${data.agent_id}-claim-${Date.now()}`, time: simTime, agentId: data.agent_id, status: "CLAIMED", type: "AUCTION_WIN", message: `[${data.agent_id}] 🏆 AUCTION WON: Task claimed`, color: "gold" }, ...prevLogs].slice(0, 25));
+              setLogs(prevLogs => [{ id: `${eventTick}-${data.agent_id}-claim-${Date.now()}`, time: eventTime, tick: eventTick, agentId: data.agent_id, status: "CLAIMED", type: "AUCTION_WIN", message: `[${data.agent_id}] 🏆 AUCTION WON: Task claimed`, color: "gold" }, ...prevLogs].slice(0, 25));
             } else if (status === "YIELDING" && !activeYields.current.has(data.agent_id)) {
               activeYields.current.add(data.agent_id);
-              setLogs(prevLogs => [{ id: `${simTime}-${data.agent_id}-yield-${Date.now()}`, time: simTime, agentId: data.agent_id, status: "YIELDING", type: "COLLISION_AVOID", message: `[${data.agent_id}] Yielding right-of-way to higher-priority node`, color: "orange" }, ...prevLogs].slice(0, 25));
+              setLogs(prevLogs => [{ id: `${eventTick}-${data.agent_id}-yield-${Date.now()}`, time: eventTime, tick: eventTick, agentId: data.agent_id, status: "YIELDING", type: "COLLISION_AVOID", message: `[${data.agent_id}] Yielding right-of-way to higher-priority node`, color: "orange" }, ...prevLogs].slice(0, 25));
             } else if (status === "OFFLINE") {
-              setLogs(prevLogs => [{ id: `${simTime}-${data.agent_id}-offline-${Date.now()}`, time: simTime, agentId: data.agent_id, status: "OFFLINE", type: "FAILURE", message: `[${data.agent_id}] ⚠️ HEARTBEAT EXPIRED: Node OFFLINE (Stranded)`, color: "red" }, ...prevLogs].slice(0, 25));
+              setLogs(prevLogs => [{ id: `${eventTick}-${data.agent_id}-offline-${Date.now()}`, time: eventTime, tick: eventTick, agentId: data.agent_id, status: "OFFLINE", type: "FAILURE", message: `[${data.agent_id}] ⚠️ HEARTBEAT EXPIRED: Node OFFLINE (Stranded)`, color: "red" }, ...prevLogs].slice(0, 25));
             } else if (status === "DEAD") {
-              setLogs(prevLogs => [{ id: `${simTime}-${data.agent_id}-dead-${Date.now()}`, time: simTime, agentId: data.agent_id, status: "DEAD", type: "FAILURE", message: `[${data.agent_id}] ⚠️ CRITICAL FAILURE: Node offline`, color: "red" }, ...prevLogs].slice(0, 25));
+              setLogs(prevLogs => [{ id: `${eventTick}-${data.agent_id}-dead-${Date.now()}`, time: eventTime, tick: eventTick, agentId: data.agent_id, status: "DEAD", type: "FAILURE", message: `[${data.agent_id}] ⚠️ CRITICAL FAILURE: Node offline`, color: "red" }, ...prevLogs].slice(0, 25));
             } else if (status === "DOCKED" && prevStatus && prevStatus !== "DOCKED") {
-              setLogs(prevLogs => [{ id: `${simTime}-${data.agent_id}-dock-${Date.now()}`, time: simTime, agentId: data.agent_id, status: "DOCKED", type: "DOCKING", message: `[${data.agent_id}] 🔌 DOCKED at charging pad`, color: "sky" }, ...prevLogs].slice(0, 25));
+              setLogs(prevLogs => [{ id: `${eventTick}-${data.agent_id}-dock-${Date.now()}`, time: eventTime, tick: eventTick, agentId: data.agent_id, status: "DOCKED", type: "DOCKING", message: `[${data.agent_id}] 🔌 DOCKED at charging pad`, color: "sky" }, ...prevLogs].slice(0, 25));
             }
           }
 
           if (status !== "YIELDING" && activeYields.current.has(data.agent_id)) {
             activeYields.current.delete(data.agent_id);
           }
-          prevRobotPositions.current[data.agent_id] = { x: data.x, y: data.y, time: simTime, status };
+          prevRobotPositions.current[data.agent_id] = { x: data.x, y: data.y, time: eventTick, tick: eventTick, status };
         }
 
         // Dashboard Render Throttle (150ms limit)
-        if (data.time !== undefined) {
+        if (data.time !== undefined || data.tick !== undefined) {
           const now = Date.now();
           if (now - lastRenderTime.current > 150) {
-            setTime(prevTime => Math.max(prevTime, data.time));
+            const incomingTick = data.tick !== undefined
+              ? data.tick
+              : (typeof data.time === 'number' && data.time < 1000000000 ? data.time : null);
+            if (incomingTick !== null) {
+              setTime(prevTime => Math.max(prevTime, incomingTick));
+            } else if (typeof data.time === 'number' && data.time > 1000000000 && simStartTimeRef.current) {
+              const elapsedSec = Math.max(0, data.time - simStartTimeRef.current);
+              setTime(prevTime => (prevTime > 1000000000 ? elapsedSec : prevTime));
+            }
             setTelemetryRobots({ ...robotsRef.current });
             lastRenderTime.current = now;
           }
@@ -697,7 +775,7 @@ export default function App() {
 
     const beaconId = Date.now();
     setTargetBeacons(prev => [...prev.filter(b => Date.now() - b.id < 5000), { x: clampedX, y: clampedY, id: beaconId }]);
-    setLogs(prev => [{ id: `${beaconId}-dispatch`, time: timeRef.current, agentId: selectedAgentRef.current, status: "DISPATCH", type: "DISPATCH", message: `[OPERATOR] Dispatched task target @ (${clampedX}, ${clampedY})`, color: "purple" }, ...prev].slice(0, 25));
+    setLogs(prev => [{ id: `${beaconId}-dispatch`, time: timeRef.current, tick: timeRef.current, agentId: selectedAgentRef.current, status: "DISPATCH", type: "DISPATCH", message: `[OPERATOR] Dispatched task target @ (${clampedX}, ${clampedY})`, color: "purple" }, ...prev].slice(0, 25));
 
     try { await axios.post(`${API_URL}/api/tasks`, { x: clampedX, y: clampedY }); } catch { /* ignore */ }
     try {
@@ -739,6 +817,7 @@ export default function App() {
         robotIds={robotIds}
         robots={telemetryRobots}
         time={time}
+        simStartTime={simStartTime}
         isConnected={isConnected}
         selectedAgent={selectedAgent}
         setSelectedAgent={setSelectedAgent}

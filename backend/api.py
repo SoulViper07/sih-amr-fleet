@@ -62,14 +62,18 @@ PORT = int(os.getenv("MQTT_PORT", 1883))
 active_websockets: list[WebSocket] = []
 mqtt_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
 mqtt_client: mqtt.Client | None = None
+latest_sim_tick: int = 0
 
 
 def on_mqtt_message(client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> None:
     """MQTT message callback - pushes to async queue for WebSocket broadcast."""
+    global latest_sim_tick
     print(f"MQTT IN: {msg.topic}")
     try:
         payload = json.loads(msg.payload.decode())
         payload["topic"] = msg.topic
+        if "time" in payload and isinstance(payload["time"], (int, float)) and payload["time"] < 1_000_000_000:
+            latest_sim_tick = int(payload["time"])
         if msg.topic == "fleet/metrics":
             collector.update_from_snapshot(payload)
         mqtt_queue.put_nowait(payload)
@@ -204,7 +208,7 @@ async def sabotage_agent(agent_id: str) -> dict[str, Any]:
             json.dumps({
                 "agent_id": agent_id,
                 "status": "DEAD",
-                "time": time.time(),
+                "time": latest_sim_tick,
             }),
             qos=1,
         )
