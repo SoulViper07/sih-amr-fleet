@@ -4,7 +4,7 @@ import { OrbitControls, Box, Text, Plane, Ring, Sphere, Cylinder, Billboard, Sha
 import * as THREE from 'three';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Clock, Cpu, Battery, Zap, Target, Terminal, Radio, Skull } from 'lucide-react';
+import { Clock, Cpu, Battery, Zap, Target, Terminal, Radio, Skull, Wrench } from 'lucide-react';
 import TelemetryHUD from './components/TelemetryHUD';
 
 const originalWarn = console.warn;
@@ -358,7 +358,7 @@ const SimulationCanvas = React.memo(({ robotIds, robotsRef, obstacles, chargingS
   );
 });
 
-const DashboardPanel = ({ robotIds, robots, time, isConnected, selectedAgent, setSelectedAgent, logs, onSabotage }) => {
+const DashboardPanel = ({ robotIds, robots, time, isConnected, selectedAgent, setSelectedAgent, logs, onSabotage, onReviveFleet }) => {
   const getBatteryColor = (level) => {
     if (level > 50) return 'bg-emerald-500';
     if (level > 20) return 'bg-amber-500';
@@ -427,7 +427,16 @@ const DashboardPanel = ({ robotIds, robots, time, isConnected, selectedAgent, se
       <div className="mb-3 bg-[#1f1614] rounded-lg border border-[#d4af37]/20 p-2.5 flex-shrink-0">
         <div className="flex items-center justify-between mb-1.5">
           <div className="flex items-center gap-1.5"><Cpu className="w-3.5 h-3.5 text-[#d4af37]" /><h3 className="font-semibold text-[#d4af37] text-xs">SWARM TELEMETRY</h3></div>
-          <span className="text-[9px] text-[#d4af37]/80">SABOTAGE CONTROLS</span>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={(e) => { e.stopPropagation(); onReviveFleet && onReviveFleet(); }}
+              title="Revive Fleet / Emergency Repair"
+              className="px-2 py-0.5 rounded text-[8px] font-mono font-bold flex items-center gap-1 bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.7)] active:scale-95 cursor-pointer transition-all"
+            >
+              <Wrench className="w-2.5 h-2.5" /><span>REVIVE FLEET</span>
+            </button>
+            <span className="text-[9px] text-[#d4af37]/80 font-mono">SABOTAGE</span>
+          </div>
         </div>
         <div className="space-y-1.5 max-h-[150px] overflow-y-auto custom-scrollbar pr-1">
           {sortedRobotIds.map((id) => {
@@ -478,6 +487,7 @@ const DashboardPanel = ({ robotIds, robots, time, isConnected, selectedAgent, se
                 const isYield = log.status === 'YIELDING' || log.type === 'COLLISION_AVOID';
                 const isDead = log.status === 'DEAD' || log.type === 'FAILURE';
                 const isDispatch = log.type === 'DISPATCH';
+                const isRecovery = log.status === 'RECOVERY' || log.type === 'RECOVERY';
 
                 let containerStyle = 'bg-[#1a1311] border-[#d4af37]/20 text-[#f5f5dc]';
                 let tagStyle = 'bg-[#120d0b] text-[#f5f5dc]/70 border-[#d4af37]/20';
@@ -488,6 +498,7 @@ const DashboardPanel = ({ robotIds, robots, time, isConnected, selectedAgent, se
                 else if (isClaim) { containerStyle = 'bg-yellow-950/50 border-yellow-500/60 text-yellow-200 shadow-[0_0_10px_rgba(234,179,8,0.2)]'; tagStyle = 'bg-yellow-500/20 text-yellow-300 border-yellow-400/50'; tagText = 'CLAIMED'; }
                 else if (isYield) { containerStyle = 'bg-amber-950/40 border-amber-600/50 text-amber-200'; tagStyle = 'bg-amber-500/20 text-amber-300 border-amber-500/50'; tagText = 'YIELD'; }
                 else if (isDead) { containerStyle = 'bg-red-950/50 border-red-600/60 text-red-200 shadow-[0_0_10px_rgba(239,68,68,0.2)]'; tagStyle = 'bg-red-500/20 text-red-300 border-red-500/50'; tagText = 'FAILURE'; }
+                else if (isRecovery) { containerStyle = 'bg-emerald-950/50 border-emerald-500/60 text-emerald-200 shadow-[0_0_10px_rgba(16,185,129,0.2)]'; tagStyle = 'bg-emerald-500/20 text-emerald-300 border-emerald-400/50'; tagText = 'RECOVERY'; }
                 else if (isDispatch) { containerStyle = 'bg-purple-950/40 border-purple-500/50 text-purple-200'; tagStyle = 'bg-purple-500/20 text-purple-300 border-purple-400/50'; tagText = 'DISPATCH'; }
 
                 return (
@@ -559,6 +570,8 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
+  const [toastMessage, setToastMessage] = useState(null);
+
   const handleSabotage = async (agentId) => {
     try {
       await fetch(`${API_URL}/api/sabotage/${agentId}`, { method: 'POST' });
@@ -567,6 +580,31 @@ export default function App() {
       setLogs(prev => [{ id: `${Date.now()}-${agentId}-sabotage`, time: robotsRef.current[agentId]?.time ?? 0, agentId: agentId, status: "DEAD", type: "FAILURE", message: `[SABOTAGE] ⚠️ Manual override: ${agentId} neutralized -> Dynamic obstacle active on grid`, color: "red" }, ...prev].slice(0, 25));
     } catch {
       // ignore
+    }
+  };
+
+  const handleReviveFleet = async () => {
+    try {
+      await fetch(`${API_URL}/api/fleet/revive`, { method: 'POST' });
+      Object.keys(robotsRef.current).forEach(id => {
+        if (robotsRef.current[id].status === 'DEAD' || robotsRef.current[id].status === 'OFFLINE') {
+          robotsRef.current[id].status = 'ACTIVE';
+        }
+      });
+      setTelemetryRobots({ ...robotsRef.current });
+      setToastMessage("Fleet Repaired: All AMRs Revived");
+      setTimeout(() => setToastMessage(null), 3500);
+      setLogs(prev => [{
+        id: `${Date.now()}-fleet-revive`,
+        time: time,
+        agentId: "ALL",
+        status: "ACTIVE",
+        type: "RECOVERY",
+        message: `[RECOVERY] 🛠️ Emergency Repair: All fleet agents revived and returned to service`,
+        color: "emerald"
+      }, ...prev].slice(0, 25));
+    } catch (err) {
+      console.error("Failed to revive fleet:", err);
     }
   };
 
@@ -706,7 +744,21 @@ export default function App() {
         setSelectedAgent={setSelectedAgent}
         logs={logs}
         onSabotage={handleSabotage}
+        onReviveFleet={handleReviveFleet}
       />
+      <AnimatePresence>
+        {toastMessage && (
+          <motion.div
+            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.95 }}
+            className="fixed top-5 left-1/2 -translate-x-1/2 z-50 bg-emerald-950/95 text-emerald-200 border border-emerald-400/80 px-4 py-2 rounded-lg shadow-[0_0_20px_rgba(16,185,129,0.5)] flex items-center gap-2 font-mono text-xs backdrop-blur-md"
+          >
+            <Wrench className="w-4 h-4 text-emerald-400 animate-spin" style={{ animationDuration: '3s' }} />
+            <span className="font-bold">{toastMessage}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -77,6 +77,8 @@ class AMRAgent:
         self.peer_last_seen_tick: dict[str, int] = {}
         self._crashed: bool = False
         self.tasks_failed: int = 0
+        self.home_dock_pos: tuple[int, int] = start_pos
+        self.dead_since_tick: int | None = None
 
         # Edge-AI bidding state
         self.bid_cost: float | None = None
@@ -148,6 +150,9 @@ class AMRAgent:
             client.subscribe(f"amr/{self.agent_id}/sabotage", qos=1)
             client.subscribe(f"fleet/sabotage/{self.agent_id}", qos=1)
             client.subscribe("fleet/sabotage", qos=1)
+            client.subscribe(f"amr/{self.agent_id}/revive", qos=1)
+            client.subscribe("amr/all/revive", qos=1)
+            client.subscribe("amr/+/revive", qos=1)
 
     def _on_disconnect(self, client: mqtt.Client, userdata: object, rc: int) -> None:
         """Callback for when the client disconnects from the broker."""
@@ -176,6 +181,14 @@ class AMRAgent:
             self._handle_sabotage(payload)
             return
 
+        if (
+            topic == f"amr/{self.agent_id}/revive"
+            or topic == "amr/all/revive"
+            or (topic.startswith("amr/") and topic.endswith("/revive"))
+        ):
+            self._handle_revive(payload)
+            return
+
         if topic == "fleet/intents":
             self._handle_intent(payload)
         elif topic == "fleet/telemetry":
@@ -188,6 +201,70 @@ class AMRAgent:
             self._handle_heartbeat(payload)
         elif topic.startswith("fleet/dispatch/"):
             self._handle_dispatch(payload)
+
+    def _handle_revive(self, payload: dict | None = None) -> None:
+        """Handle revive command from MQTT."""
+        spawn_pos = None
+        if payload and isinstance(payload, dict):
+            target_agent = payload.get("agent_id")
+            if target_agent and target_agent not in [self.agent_id, "all", "ALL"]:
+                return
+            sp = payload.get("spawn_pos")
+            if isinstance(sp, (list, tuple)) and len(sp) >= 2:
+                spawn_pos = (int(sp[0]), int(sp[1]))
+        self.revive(spawn_pos)
+
+    def revive(self, spawn_pos: tuple[int, int] | None = None) -> None:
+        """Revive and return agent to service after being killed, sabotaged, or crashed."""
+        if spawn_pos is not None:
+            self.position = spawn_pos
+        else:
+            self.position = getattr(self, "home_dock_pos", self.current_pos)
+
+        self._crashed = False
+        self.dead_since_tick = None
+        self.path = []
+        self.current_path = []
+        self.target = None
+        self.current_goal = None
+        self.goal = None
+        self.intended_next_pos = None
+
+        if self.battery <= 0:
+            self.battery = 100.0
+
+        if self.current_pos in self.CHARGING_STATIONS:
+            self.status = "DOCKED"
+        else:
+            self.status = "ACTIVE"
+
+        # Reconnect MQTT client if disconnected during silent crash
+        try:
+            if hasattr(self, "client") and self.client is not None:
+                if not self.client.is_connected():
+                    self.client.reconnect()
+                    self.client.loop_start()
+        except Exception:
+            pass
+
+        # Broadcast revived status telemetry over MQTT
+        try:
+            revived_telemetry = {
+                "agent_id": self.agent_id,
+                "x": self.current_pos[0],
+                "y": self.current_pos[1],
+                "time": self.local_time,
+                "battery": round(self.battery, 1),
+                "priority": self.priority,
+                "status": self.status,
+                "intended_next_pos": None,
+                "next_pos": self.current_pos,
+            }
+            self.client.publish("fleet/telemetry", json.dumps(revived_telemetry), qos=1)
+        except Exception:
+            pass
+
+        logger.info(f"Agent '{self.agent_id}' revived at {self.current_pos} with status '{self.status}'")
 
     def _handle_sabotage(self, payload: dict | None = None) -> None:
         """Handle sabotage / kill command from MQTT message."""
@@ -203,6 +280,7 @@ class AMRAgent:
         """Enforce strict, permanent agent deactivation upon sabotage or kill command."""
         self.status = "DEAD"
         self._crashed = True
+        self.dead_since_tick = self.local_time
         self.current_path = []
         self.current_goal = None
         self.goal = None
@@ -266,8 +344,11 @@ class AMRAgent:
             next_pos = (inp[0], inp[1])
 
         status = payload.get("status", "DOCKED")
-        if sender_id in self.peer_positions and self.peer_positions[sender_id].get("status") == "OFFLINE" and status != "OFFLINE":
-            status = "OFFLINE"
+        if status in ["ACTIVE", "DOCKED", "RUNNING", "YIELDING"]:
+            if sender_id in self.peer_positions:
+                old_pos = self.peer_positions[sender_id].get("pos")
+                if old_pos:
+                    self.dynamic_obstacles.discard(old_pos)
 
         self.peer_positions[sender_id] = {
             "pos": (x, y),
@@ -292,10 +373,14 @@ class AMRAgent:
         status = payload.get("status", "ACTIVE")
         if pos is not None and isinstance(pos, (list, tuple)) and len(pos) >= 2:
             pos_tuple = (int(pos[0]), int(pos[1]))
+            if status in ["ACTIVE", "DOCKED", "RUNNING", "YIELDING"]:
+                if sender_id in self.peer_positions:
+                    old_pos = self.peer_positions[sender_id].get("pos")
+                    if old_pos:
+                        self.dynamic_obstacles.discard(old_pos)
             if sender_id in self.peer_positions:
                 self.peer_positions[sender_id]["pos"] = pos_tuple
-                if self.peer_positions[sender_id].get("status") != "OFFLINE":
-                    self.peer_positions[sender_id]["status"] = status
+                self.peer_positions[sender_id]["status"] = status
             else:
                 self.peer_positions[sender_id] = {
                     "pos": pos_tuple,
@@ -520,6 +605,7 @@ class AMRAgent:
         """Abruptly halt MQTT publishing and disconnect without sending a shutdown message."""
         self._crashed = True
         self.status = "OFFLINE"
+        self.dead_since_tick = self.local_time
         try:
             self.client.loop_stop()
             self.client.disconnect()
@@ -529,10 +615,18 @@ class AMRAgent:
 
     def step(self, tick: int | None = None) -> None:
         """Process simulation tick: broadcast heartbeat, check vitality, update bidding and position."""
-        if self.status in ["DEAD", "OFFLINE"] or getattr(self, "_crashed", False):
-            return
         if tick is not None:
             self.local_time = tick
+        current_tick = self.local_time
+
+        # Self-Healing Timer: check if agent has been dead/offline for >= 40 ticks
+        if self.status in ["DEAD", "OFFLINE"] or getattr(self, "_crashed", False):
+            if self.dead_since_tick is None:
+                self.dead_since_tick = current_tick
+            elif (current_tick - self.dead_since_tick) >= 40:
+                logger.info(f"Autonomous diagnostic recovery: {self.agent_id} self-healed and returned to service.")
+                self.revive(getattr(self, "home_dock_pos", None))
+            return
 
         # Broadcast heartbeat on each simulation tick
         self.publish_heartbeat(self.local_time)
@@ -549,8 +643,6 @@ class AMRAgent:
         Args:
             payload: JSON payload containing current simulation time.
         """
-        if self.status in ["DEAD", "OFFLINE"] or getattr(self, "_crashed", False):
-            return
         tick = payload.get("time", self.local_time)
         self.step(tick)
 

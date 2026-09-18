@@ -211,6 +211,18 @@ async def sabotage_agent(agent_id: str) -> dict[str, Any]:
     return {"status": "success", "sabotaged": agent_id, "all_sabotaged": SABOTAGED_AGENTS}
 
 
+@app.post("/api/fleet/revive")
+async def revive_fleet() -> dict[str, Any]:
+    """Revive all agents in the fleet."""
+    global mqtt_client, SABOTAGED_AGENTS
+    SABOTAGED_AGENTS.clear()
+    if mqtt_client:
+        payload = {"action": "revive"}
+        mqtt_client.publish("amr/all/revive", json.dumps(payload), qos=1)
+    logger.info("Fleet revive requested via API")
+    return {"status": "success", "message": "All AMRs revived"}
+
+
 class TaskRequest(BaseModel):
     x: int
     y: int
