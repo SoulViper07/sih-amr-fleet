@@ -157,7 +157,7 @@ const AmrMesh = React.memo(({ id, robotsRef }) => {
     }
 
     const currentStatus = (data.status || 'ACTIVE').toUpperCase();
-    const currentBattery = data.battery ?? 100;
+    const currentBattery = (data.battery !== undefined && data.battery !== null) ? data.battery : lastStateRef.current.battery;
     if (lastStateRef.current.status !== currentStatus || Math.abs(lastStateRef.current.battery - currentBattery) >= 1) {
       lastStateRef.current = { status: currentStatus, battery: currentBattery };
       setVisualState({ status: currentStatus, battery: currentBattery });
@@ -493,11 +493,11 @@ const DashboardPanel = ({ robotIds, robots, time, simStartTime, isConnected, sel
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <div className="flex-shrink-0">{getBatteryIcon(pos.battery ?? 100)}</div>
+                  <div className="flex-shrink-0">{getBatteryIcon(pos.battery !== undefined && pos.battery !== null ? pos.battery : 0)}</div>
                   <div className="flex-1 h-1.5 bg-[#120d0b] rounded-full overflow-hidden border border-[#d4af37]/10">
-                    <motion.div className={`h-full rounded-full ${getBatteryColor(pos.battery ?? 100)}`} initial={{ width: 0 }} animate={{ width: `${pos.battery ?? 100}%` }} transition={{ type: 'spring', damping: 20, stiffness: 100 }} />
+                    <motion.div className={`h-full rounded-full ${getBatteryColor(pos.battery !== undefined && pos.battery !== null ? pos.battery : 0)}`} initial={{ width: 0 }} animate={{ width: `${pos.battery !== undefined && pos.battery !== null ? pos.battery : 0}%` }} transition={{ type: 'spring', damping: 20, stiffness: 100 }} />
                   </div>
-                  <span className={`font-mono text-[9px] w-7 text-right ${(pos.battery ?? 100) > 50 ? 'text-emerald-400' : (pos.battery ?? 100) > 20 ? 'text-amber-400' : 'text-red-400'}`}>{pos.battery ?? 100}%</span>
+                  <span className={`font-mono text-[9px] w-7 text-right ${(pos.battery ?? 0) > 50 ? 'text-emerald-400' : (pos.battery ?? 0) > 20 ? 'text-amber-400' : 'text-red-400'}`}>{pos.battery !== undefined && pos.battery !== null ? Math.round(pos.battery) : 0}%</span>
                   <span className="text-[9px] text-[#d4af37] font-mono">PRI:{pos.priority ?? 1}</span>
                 </div>
               </div>
@@ -611,7 +611,14 @@ export default function App() {
   const handleSabotage = async (agentId) => {
     try {
       await fetch(`${API_URL}/api/sabotage/${agentId}`, { method: 'POST' });
-      if (robotsRef.current[agentId]) robotsRef.current[agentId].status = 'DEAD';
+      if (robotsRef.current[agentId]) {
+        const bot = robotsRef.current[agentId];
+        robotsRef.current[agentId] = {
+          ...bot,
+          status: 'DEAD',
+          battery: bot.battery,
+        };
+      }
       setTelemetryRobots({ ...robotsRef.current });
       const currentTick = timeRef.current;
       setLogs(prev => [{
@@ -694,18 +701,24 @@ export default function App() {
           setMetrics(data.metrics);
         }
 
-        if (data.agent_id && data.x !== undefined && data.y !== undefined) {
-          const prev = prevRobotPositions.current[data.agent_id];
-          const prevStatus = prev?.status;
-          let status = data.status ?? "ACTIVE";
+        if (data.agent_id) {
+          const prevBot = robotsRef.current[data.agent_id] || {};
+          const prevStatus = prevBot.status;
+          let status = data.status ?? prevBot.status ?? "ACTIVE";
           if (status === "IDLE") status = "DOCKED";
 
+          const currentBattery = (data.battery !== undefined && data.battery !== null)
+            ? Number(data.battery)
+            : prevBot.battery;
+
           robotsRef.current[data.agent_id] = {
-            ...prev, ...data, status,
+            ...prevBot,
+            ...data,
+            status,
             time: eventTick,
             tick: eventTick,
-            battery: data.battery ?? prev?.battery ?? 100,
-            priority: data.priority ?? prev?.priority ?? 1,
+            battery: currentBattery,
+            priority: data.priority ?? prevBot.priority ?? 1,
           };
 
           setRobotIds(prevIds => (prevIds.includes(data.agent_id) ? prevIds : [...prevIds, data.agent_id]));
@@ -731,7 +744,14 @@ export default function App() {
           if (status !== "YIELDING" && activeYields.current.has(data.agent_id)) {
             activeYields.current.delete(data.agent_id);
           }
-          prevRobotPositions.current[data.agent_id] = { x: data.x, y: data.y, time: eventTick, tick: eventTick, status };
+          prevRobotPositions.current[data.agent_id] = {
+            x: data.x ?? prevBot.x ?? 0,
+            y: data.y ?? prevBot.y ?? 0,
+            time: eventTick,
+            tick: eventTick,
+            status,
+            battery: currentBattery,
+          };
         }
 
         // Dashboard Render Throttle (150ms limit)

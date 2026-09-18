@@ -63,6 +63,7 @@ active_websockets: list[WebSocket] = []
 mqtt_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
 mqtt_client: mqtt.Client | None = None
 latest_sim_tick: int = 0
+latest_fleet_state: dict[str, dict[str, Any]] = {}
 
 
 def on_mqtt_message(client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> None:
@@ -74,6 +75,11 @@ def on_mqtt_message(client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -
         payload["topic"] = msg.topic
         if "time" in payload and isinstance(payload["time"], (int, float)) and payload["time"] < 1_000_000_000:
             latest_sim_tick = int(payload["time"])
+        if payload.get("agent_id"):
+            aid = payload["agent_id"]
+            if aid not in latest_fleet_state:
+                latest_fleet_state[aid] = {}
+            latest_fleet_state[aid].update(payload)
         if msg.topic == "fleet/metrics":
             collector.update_from_snapshot(payload)
         mqtt_queue.put_nowait(payload)
@@ -195,21 +201,36 @@ async def get_sabotage_status() -> dict[str, Any]:
 @app.post("/api/sabotage/{agent_id}")
 async def sabotage_agent(agent_id: str) -> dict[str, Any]:
     """Sabotage an agent (mark as dead)."""
-    global mqtt_client
+    global mqtt_client, latest_fleet_state
     if agent_id not in SABOTAGED_AGENTS:
         SABOTAGED_AGENTS.append(agent_id)
         logger.info(f"Agent {agent_id} sabotaged!")
+
+    # Retrieve agent's last known battery level and position from in-memory fleet state cache
+    agent_state = latest_fleet_state.get(agent_id, {})
+    last_battery = agent_state.get("battery", 0.0)
+    latest_fleet_state[agent_id] = {
+        **agent_state,
+        "status": "DEAD",
+        "battery": round(float(last_battery), 1),
+    }
+
     if mqtt_client:
         payload = {"agent_id": agent_id, "action": "sabotage"}
         mqtt_client.publish(f"amr/{agent_id}/sabotage", json.dumps(payload), qos=1)
         mqtt_client.publish(f"fleet/sabotage/{agent_id}", json.dumps(payload), qos=1)
+
+        telemetry_payload = {
+            "agent_id": agent_id,
+            "status": "DEAD",
+            "time": latest_sim_tick,
+            "battery": round(float(last_battery), 1),
+            "x": agent_state.get("x", 0),
+            "y": agent_state.get("y", 0),
+        }
         mqtt_client.publish(
             "fleet/telemetry",
-            json.dumps({
-                "agent_id": agent_id,
-                "status": "DEAD",
-                "time": latest_sim_tick,
-            }),
+            json.dumps(telemetry_payload),
             qos=1,
         )
     return {"status": "success", "sabotaged": agent_id, "all_sabotaged": SABOTAGED_AGENTS}
