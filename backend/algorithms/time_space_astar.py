@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import heapq
-from typing import TypeAlias
+from typing import Callable, TypeAlias
 
 Coord: TypeAlias = tuple[int, int]
 State: TypeAlias = tuple[int, int, int]
@@ -18,6 +18,7 @@ def time_space_astar(
     dynamic_reservations: dict[int, set[Coord]],
     max_time: int = 100,
     max_iterations: int = 5000,
+    conflict_callback: Callable[[], None] | None = None,
 ) -> list[State] | None:
     """Find a time-space path from start to goal avoiding static and dynamic obstacles.
 
@@ -82,6 +83,8 @@ def time_space_astar(
 
         # Vertex collision check at next time step
         if (next_x, next_y) in dynamic_reservations.get(next_t, set()):
+            if conflict_callback is not None:
+                conflict_callback()
             return False
 
         # Edge/Swap collision check
@@ -89,6 +92,8 @@ def time_space_astar(
         # they would be swapping positions (crossing the same edge in opposite directions)
         if (next_x, next_y) in dynamic_reservations.get(t, set()):
             if (curr_x, curr_y) in dynamic_reservations.get(next_t, set()):
+                if conflict_callback is not None:
+                    conflict_callback()
                 return False
 
         return True

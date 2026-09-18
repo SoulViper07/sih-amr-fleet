@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, Box, Text, Plane, Ring, Sphere, Cylinder, Billboard, Shadow } from '@react-three/drei';
 import * as THREE from 'three';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Clock, Cpu, Battery, Zap, Target, Terminal, Radio, Skull } from 'lucide-react';
+import TelemetryHUD from './components/TelemetryHUD';
 
 const originalWarn = console.warn;
 console.warn = (...args) => {
@@ -165,6 +166,7 @@ const AmrMesh = React.memo(({ id, robotsRef }) => {
 
   const rawStatus = (visualState.status || "ACTIVE").toUpperCase();
   const isDead = rawStatus === "DEAD";
+  const isOffline = rawStatus === "OFFLINE";
   const isBidding = rawStatus === "BIDDING";
   const isClaimed = rawStatus === "CLAIMED";
   const isRunning = rawStatus === "RUNNING" || rawStatus === "MOVING";
@@ -174,7 +176,9 @@ const AmrMesh = React.memo(({ id, robotsRef }) => {
   let emissiveColor = "#00FF00";
   let textColor = "#bbf7d0";
 
-  if (isDead) {
+  if (isOffline) {
+    emissiveColor = "#ef4444"; textColor = "#fca5a5";
+  } else if (isDead) {
     emissiveColor = "#FF0000"; textColor = "#ff8888";
   } else if (isBidding) {
     emissiveColor = "#00FFFF"; textColor = "#a5f3fc";
@@ -195,19 +199,49 @@ const AmrMesh = React.memo(({ id, robotsRef }) => {
       <group position={[0, 0.15, 0]}>
         {/* Main Chassis */}
         <Cylinder args={[0.45, 0.45, 0.3, 32]}>
-          <meshStandardMaterial color="#222222" metalness={0.8} roughness={0.2} />
+          <meshStandardMaterial
+            color={isOffline ? "#27272a" : "#222222"}
+            metalness={isOffline ? 0.2 : 0.8}
+            roughness={isOffline ? 0.85 : 0.2}
+          />
         </Cylinder>
         {/* Top LiDAR/Sensor Hub */}
         <Cylinder args={[0.2, 0.2, 0.15, 16]} position={[0, 0.2, 0]}>
-          <meshStandardMaterial color="#111111" metalness={0.9} roughness={0.1} />
+          <meshStandardMaterial
+            color={isOffline ? "#18181b" : "#111111"}
+            metalness={isOffline ? 0.3 : 0.9}
+            roughness={isOffline ? 0.8 : 0.1}
+          />
         </Cylinder>
         {/* Glowing Status LED Strip */}
         <Cylinder args={[0.46, 0.46, 0.05, 32]} position={[0, 0, 0]}>
-          <meshBasicMaterial color={emissiveColor} toneMapped={false} transparent opacity={0.95} />
+          <meshBasicMaterial
+            color={emissiveColor}
+            toneMapped={false}
+            transparent
+            opacity={isOffline ? 0.4 : 0.95}
+          />
         </Cylinder>
       </group>
+
+      {/* Hazard Indicator for OFFLINE Stranded Agent */}
+      {isOffline && (
+        <group position={[0, 0.65, 0]}>
+          <Ring args={[0.3, 0.48, 24]} rotation={[-Math.PI / 2, 0, 0]}>
+            <meshBasicMaterial color="#ef4444" wireframe={true} />
+          </Ring>
+          <pointLight position={[0, 0.2, 0]} intensity={4} distance={3} color="#ef4444" />
+        </group>
+      )}
+
       {isDead && <pointLight position={[0, 1, 0]} intensity={5} distance={4} color="#ef4444" />}
+
       <Billboard position={[0, 1.2, 0]}>
+        {isOffline && (
+          <Text position={[0, 0.6, 0]} fontSize={0.25} color="#ef4444" anchorX="center" anchorY="middle" outlineWidth={0.02} outlineColor="#450a0a">
+            [OFFLINE - STRANDED]
+          </Text>
+        )}
         {isBidding && (
           <Text position={[0, 0.6, 0]} fontSize={0.25} color="#22d3ee" anchorX="center" anchorY="middle" outlineWidth={0.02} outlineColor="#083344">
             [AI: CALCULATING TRAFFIC COST]
@@ -309,14 +343,14 @@ const Scene = ({ robotIds, robotsRef, obstacles, chargingStations, targetBeacons
 
 const SimulationCanvas = React.memo(({ robotIds, robotsRef, obstacles, chargingStations, targetBeacons, onFloorClick }) => {
   return (
-    <div className="w-3/4 h-full relative">
+    <div className="w-full h-full relative">
       <Canvas camera={{ position: [0, 24, 28], fov: 48 }} style={{ touchAction: 'none' }}>
         <color attach="background" args={['#120d0b']} />
         <fog attach="fog" args={['#120d0b', 25, 65]} />
         <Scene robotIds={robotIds} robotsRef={robotsRef} obstacles={obstacles} chargingStations={chargingStations} targetBeacons={targetBeacons} onFloorClick={onFloorClick} />
         <OrbitControls makeDefault target={[0, 0, 0]} enablePan={true} enableZoom={true} enableRotate={true} minPolarAngle={0} maxPolarAngle={Math.PI / 2 - 0.05} minZoom={5} maxZoom={60} />
       </Canvas>
-      <div className="absolute top-4 left-4 text-[11px] font-mono text-[#f5f5dc] bg-[#1a1311]/90 px-3 py-1.5 rounded border border-[#d4af37]/30 backdrop-blur shadow-lg flex items-center gap-2">
+      <div className="absolute top-4 left-4 text-[11px] font-mono text-[#f5f5dc] bg-[#1a1311]/90 px-3 py-1.5 rounded border border-[#d4af37]/30 backdrop-blur shadow-lg flex items-center gap-2 pointer-events-none">
         <span className="w-2 h-2 rounded-full bg-[#d4af37] animate-pulse" />
         <span>Click floor to deploy • Drag to rotate • Scroll to zoom</span>
       </div>
@@ -341,6 +375,7 @@ const DashboardPanel = ({ robotIds, robots, time, isConnected, selectedAgent, se
 
   const getStatusBadge = (status) => {
     const s = (status || "ACTIVE").toUpperCase();
+    if (s === "OFFLINE") return (<span className="px-1.5 py-0.5 text-[9px] font-bold bg-red-950/80 text-rose-300 border border-red-600/70 rounded shadow-[0_0_8px_rgba(244,63,94,0.4)] flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />OFFLINE</span>);
     if (s === "DEAD") return (<span className="px-1.5 py-0.5 text-[9px] font-bold bg-red-950/70 text-red-400 border border-red-700/60 rounded shadow-[0_0_8px_rgba(239,68,68,0.3)] flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />DEAD</span>);
     if (s === "BIDDING") return (<span className="px-1.5 py-0.5 text-[9px] font-bold bg-cyan-950/80 text-cyan-300 border border-cyan-500/70 rounded shadow-[0_0_8px_rgba(6,182,212,0.5)] flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />BIDDING</span>);
     if (s === "CLAIMED") return (<span className="px-1.5 py-0.5 text-[9px] font-bold bg-yellow-950/80 text-yellow-300 border border-yellow-500/70 rounded shadow-[0_0_8px_rgba(234,179,8,0.5)] flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse" />CLAIMED</span>);
@@ -382,7 +417,7 @@ const DashboardPanel = ({ robotIds, robots, time, isConnected, selectedAgent, se
             return (
               <motion.button key={agent} onClick={() => setSelectedAgent(agent)} whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} className={`px-2 py-1 rounded font-medium text-[10px] uppercase tracking-wide transition-all flex items-center justify-between ${selectedAgent === agent ? 'bg-[#d4af37]/25 border border-[#d4af37] text-[#fffff0] shadow-[0_0_10px_rgba(212,175,55,0.3)]' : 'bg-[#1a1311] border border-[#d4af37]/20 text-[#f5f5dc] hover:border-[#d4af37]/50 hover:bg-[#251b18]'}`}>
                 <span>{agent}</span>
-                <span className={`w-1.5 h-1.5 rounded-full ${agentStatus === "BIDDING" ? 'bg-cyan-400' : agentStatus === "CLAIMED" ? 'bg-yellow-400' : agentStatus === "RUNNING" || agentStatus === "MOVING" ? 'bg-emerald-400' : agentStatus === "DOCKED" || agentStatus === "IDLE" ? 'bg-sky-400' : agentStatus === "DEAD" ? 'bg-red-500' : agentStatus === "YIELDING" ? 'bg-orange-500' : 'bg-amber-400'}`} />
+                <span className={`w-1.5 h-1.5 rounded-full ${agentStatus === "OFFLINE" ? 'bg-rose-500' : agentStatus === "BIDDING" ? 'bg-cyan-400' : agentStatus === "CLAIMED" ? 'bg-yellow-400' : agentStatus === "RUNNING" || agentStatus === "MOVING" ? 'bg-emerald-400' : agentStatus === "DOCKED" || agentStatus === "IDLE" ? 'bg-sky-400' : agentStatus === "DEAD" ? 'bg-red-500' : agentStatus === "YIELDING" ? 'bg-orange-500' : 'bg-amber-400'}`} />
               </motion.button>
             );
           })}
@@ -398,7 +433,7 @@ const DashboardPanel = ({ robotIds, robots, time, isConnected, selectedAgent, se
           {sortedRobotIds.map((id) => {
             const pos = robots[id] || {};
             const displayStatus = (pos.status === "IDLE" || !pos.status) ? "DOCKED" : (pos.status === "MOVING" ? "RUNNING" : pos.status);
-            const isDead = pos.status === "DEAD";
+            const isDead = pos.status === "DEAD" || (pos.status || "").toUpperCase() === "OFFLINE";
 
             return (
               <div key={id} className={`bg-[#1a1311] rounded border p-2 transition-all ${isDead ? 'border-red-800/60 bg-red-950/20' : 'border-[#d4af37]/20'}`}>
@@ -437,6 +472,7 @@ const DashboardPanel = ({ robotIds, robots, time, isConnected, selectedAgent, se
           <AnimatePresence initial={false}>
             {logs.map((log) => {
               if (typeof log === 'object' && log !== null) {
+                const isOffline = log.status === 'OFFLINE' || log.type === 'OFFLINE';
                 const isBid = log.status === 'BIDDING' || log.type === 'AUCTION_BID';
                 const isClaim = log.status === 'CLAIMED' || log.type === 'AUCTION_WIN';
                 const isYield = log.status === 'YIELDING' || log.type === 'COLLISION_AVOID';
@@ -447,7 +483,8 @@ const DashboardPanel = ({ robotIds, robots, time, isConnected, selectedAgent, se
                 let tagStyle = 'bg-[#120d0b] text-[#f5f5dc]/70 border-[#d4af37]/20';
                 let tagText = log.status || log.type || 'INFO';
 
-                if (isBid) { containerStyle = 'bg-cyan-950/50 border-cyan-500/60 text-cyan-200 shadow-[0_0_10px_rgba(6,182,212,0.2)]'; tagStyle = 'bg-cyan-500/20 text-cyan-300 border-cyan-400/50'; tagText = 'BIDDING'; }
+                if (isOffline) { containerStyle = 'bg-rose-950/50 border-rose-600/60 text-rose-200 shadow-[0_0_10px_rgba(244,63,94,0.2)]'; tagStyle = 'bg-rose-500/20 text-rose-300 border-rose-500/50'; tagText = 'OFFLINE'; }
+                else if (isBid) { containerStyle = 'bg-cyan-950/50 border-cyan-500/60 text-cyan-200 shadow-[0_0_10px_rgba(6,182,212,0.2)]'; tagStyle = 'bg-cyan-500/20 text-cyan-300 border-cyan-400/50'; tagText = 'BIDDING'; }
                 else if (isClaim) { containerStyle = 'bg-yellow-950/50 border-yellow-500/60 text-yellow-200 shadow-[0_0_10px_rgba(234,179,8,0.2)]'; tagStyle = 'bg-yellow-500/20 text-yellow-300 border-yellow-400/50'; tagText = 'CLAIMED'; }
                 else if (isYield) { containerStyle = 'bg-amber-950/40 border-amber-600/50 text-amber-200'; tagStyle = 'bg-amber-500/20 text-amber-300 border-amber-500/50'; tagText = 'YIELD'; }
                 else if (isDead) { containerStyle = 'bg-red-950/50 border-red-600/60 text-red-200 shadow-[0_0_10px_rgba(239,68,68,0.2)]'; tagStyle = 'bg-red-500/20 text-red-300 border-red-500/50'; tagText = 'FAILURE'; }
@@ -485,9 +522,16 @@ export default function App() {
   const [chargingStations, setChargingStations] = useState(DEFAULT_CHARGING_STATIONS);
   const [logs, setLogs] = useState([]);
   const [targetBeacons, setTargetBeacons] = useState([]);
-  
+  const [metrics, setMetrics] = useState(null);
+
   const prevRobotPositions = useRef({});
   const activeYields = useRef(new Set());
+  const selectedAgentRef = useRef(selectedAgent);
+  selectedAgentRef.current = selectedAgent;
+  const timeRef = useRef(time);
+  timeRef.current = time;
+  const obstaclesRef = useRef(obstacles);
+  obstaclesRef.current = obstacles;
 
   useEffect(() => {
     fetch(`${API_URL}/api/config`)
@@ -498,6 +542,13 @@ export default function App() {
         else if (data.charging_stations) setChargingStations(data.charging_stations);
       })
       .catch(err => console.error('Failed to fetch config:', err));
+
+    fetch(`${API_URL}/api/metrics`)
+      .then(res => res.json())
+      .then(data => {
+        if (data && typeof data === 'object') setMetrics(data);
+      })
+      .catch(err => console.error('Failed to fetch initial metrics:', err));
   }, []);
 
   useEffect(() => {
@@ -531,7 +582,12 @@ export default function App() {
       try {
         const data = JSON.parse(event.data);
         const simTime = data.time ?? 0;
-        
+
+        // Extract metrics if provided by backend broadcast
+        if (data.metrics) {
+          setMetrics(data.metrics);
+        }
+
         if (data.agent_id && data.x !== undefined && data.y !== undefined) {
           const prev = prevRobotPositions.current[data.agent_id];
           const prevStatus = prev?.status;
@@ -555,6 +611,8 @@ export default function App() {
             } else if (status === "YIELDING" && !activeYields.current.has(data.agent_id)) {
               activeYields.current.add(data.agent_id);
               setLogs(prevLogs => [{ id: `${simTime}-${data.agent_id}-yield-${Date.now()}`, time: simTime, agentId: data.agent_id, status: "YIELDING", type: "COLLISION_AVOID", message: `[${data.agent_id}] Yielding right-of-way to higher-priority node`, color: "orange" }, ...prevLogs].slice(0, 25));
+            } else if (status === "OFFLINE") {
+              setLogs(prevLogs => [{ id: `${simTime}-${data.agent_id}-offline-${Date.now()}`, time: simTime, agentId: data.agent_id, status: "OFFLINE", type: "FAILURE", message: `[${data.agent_id}] ⚠️ HEARTBEAT EXPIRED: Node OFFLINE (Stranded)`, color: "red" }, ...prevLogs].slice(0, 25));
             } else if (status === "DEAD") {
               setLogs(prevLogs => [{ id: `${simTime}-${data.agent_id}-dead-${Date.now()}`, time: simTime, agentId: data.agent_id, status: "DEAD", type: "FAILURE", message: `[${data.agent_id}] ⚠️ CRITICAL FAILURE: Node offline`, color: "red" }, ...prevLogs].slice(0, 25));
             } else if (status === "DOCKED" && prevStatus && prevStatus !== "DOCKED") {
@@ -589,36 +647,66 @@ export default function App() {
     };
   }, []);
 
-  const handleFloorClick = async (event) => {
+  const handleFloorClick = useCallback(async (event) => {
     if (event.stopPropagation) event.stopPropagation();
-    
+
     const gx = Math.floor(event.point.x + GRID_HALF);
     const gy = Math.floor(event.point.z + GRID_HALF);
     const clampedX = Math.max(0, Math.min(GRID_SIZE - 1, gx));
     const clampedY = Math.max(0, Math.min(GRID_SIZE - 1, gy));
 
-    if (obstacles.some(obs => obs[0] === clampedX && obs[1] === clampedY)) return;
+    if (obstaclesRef.current.some(obs => obs[0] === clampedX && obs[1] === clampedY)) return;
 
     const beaconId = Date.now();
     setTargetBeacons(prev => [...prev.filter(b => Date.now() - b.id < 5000), { x: clampedX, y: clampedY, id: beaconId }]);
-    setLogs(prev => [{ id: `${beaconId}-dispatch`, time: time, agentId: selectedAgent, status: "DISPATCH", type: "DISPATCH", message: `[OPERATOR] Dispatched task target @ (${clampedX}, ${clampedY})`, color: "purple" }, ...prev].slice(0, 25));
+    setLogs(prev => [{ id: `${beaconId}-dispatch`, time: timeRef.current, agentId: selectedAgentRef.current, status: "DISPATCH", type: "DISPATCH", message: `[OPERATOR] Dispatched task target @ (${clampedX}, ${clampedY})`, color: "purple" }, ...prev].slice(0, 25));
 
     try { await axios.post(`${API_URL}/api/tasks`, { x: clampedX, y: clampedY }); } catch { /* ignore */ }
     try {
-      await fetch(`${API_URL}/api/dispatch/${selectedAgent}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ x: clampedX, y: clampedY }) });
-      if (robotsRef.current[selectedAgent]) {
-        robotsRef.current[selectedAgent].target_x = clampedX;
-        robotsRef.current[selectedAgent].target_y = clampedY;
+      await fetch(`${API_URL}/api/dispatch/${selectedAgentRef.current}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ x: clampedX, y: clampedY }) });
+      if (robotsRef.current[selectedAgentRef.current]) {
+        robotsRef.current[selectedAgentRef.current].target_x = clampedX;
+        robotsRef.current[selectedAgentRef.current].target_y = clampedY;
       }
     } catch {
       // ignore
     }
-  };
+  }, []);
+
+  const offlineCount = robotIds.filter(id => {
+    const s = (telemetryRobots[id]?.status || "").toUpperCase();
+    return s === "OFFLINE" || s === "DEAD";
+  }).length;
+  const activeCount = Math.max(0, robotIds.length - offlineCount);
 
   return (
     <div className="h-screen w-screen overflow-hidden bg-[#120d0b] text-[#f5f5dc] flex">
-      <SimulationCanvas robotIds={robotIds} robotsRef={robotsRef} obstacles={obstacles} chargingStations={chargingStations} targetBeacons={targetBeacons} onFloorClick={handleFloorClick} />
-      <DashboardPanel robotIds={robotIds} robots={telemetryRobots} time={time} isConnected={isConnected} selectedAgent={selectedAgent} setSelectedAgent={setSelectedAgent} logs={logs} onSabotage={handleSabotage} />
+      <div className="w-3/4 h-full relative">
+        <SimulationCanvas
+          robotIds={robotIds}
+          robotsRef={robotsRef}
+          obstacles={obstacles}
+          chargingStations={chargingStations}
+          targetBeacons={targetBeacons}
+          onFloorClick={handleFloorClick}
+        />
+        <TelemetryHUD
+          metrics={metrics}
+          activeCount={activeCount}
+          offlineCount={offlineCount}
+          isConnected={isConnected}
+        />
+      </div>
+      <DashboardPanel
+        robotIds={robotIds}
+        robots={telemetryRobots}
+        time={time}
+        isConnected={isConnected}
+        selectedAgent={selectedAgent}
+        setSelectedAgent={setSelectedAgent}
+        logs={logs}
+        onSabotage={handleSabotage}
+      />
     </div>
   );
 }

@@ -2,11 +2,12 @@
 
 import json
 import logging
+import os
 import random
 import requests
 import time
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import paho.mqtt.client as mqtt
 
@@ -14,6 +15,7 @@ if TYPE_CHECKING:
     from backend.algorithms.time_space_astar import State
 
 from backend.algorithms.time_space_astar import time_space_astar
+from backend.metrics import FleetMetricsCollector, get_collector
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,9 @@ class AMRAgent:
         grid_size: tuple[int, int] = (30, 30),
         obstacles: set[tuple[int, int]] | None = None,
         priority: int = 1,
+        metrics_collector: FleetMetricsCollector | None = None,
+        task_provider: Any = None,
+        step_interval: float = 0.45,
     ) -> None:
         """Initialize the AMR agent.
 
@@ -37,8 +42,17 @@ class AMRAgent:
             grid_size: Tuple (width, height) of the warehouse grid. Default (30, 30).
             obstacles: Set of (x, y) coordinates representing permanent obstacles.
             priority: Priority level (higher number = higher priority). Default 1.
+            metrics_collector: FleetMetricsCollector instance. Default singleton.
+            task_provider: Optional callable returning pending tasks.
+            step_interval: Minimum real-time interval between physical moves in seconds. Default 0.45.
         """
         self.agent_id = agent_id
+        self.metrics_collector = metrics_collector if metrics_collector is not None else get_collector()
+        self.task_provider = task_provider
+        self.step_interval = step_interval
+        self._backend_available: bool | None = None
+        self.active_task: dict | None = None
+        self.task_start_time: float = 0.0
         self.current_pos = start_pos
         self.current_path: list[State] = []
         self.dynamic_reservations: dict[int, set[tuple[int, int]]] = {}
@@ -51,13 +65,18 @@ class AMRAgent:
         self.goal: tuple[int, int] | None = None
         self.current_goal: tuple[int, int] | None = None
         self.battery = 100.0
-        self.status = "DOCKED"  # Start docked at charging bay
+        self.CHARGING_STATIONS = [(0, 0), (0, 29), (29, 0), (29, 29), (14, 0), (14, 29)]
+        self.status = "DOCKED" if self.current_pos in self.CHARGING_STATIONS else "ACTIVE"
         self.last_sabotage_check = 0.0
         self.yield_cooldown = 0.0
         self.last_replan_time = 0.0
         self.last_move_time = 0.0
         self.yield_ticks = 0
-        self.CHARGING_STATIONS = [(0, 0), (0, 29), (29, 0), (29, 29), (14, 0), (14, 29)]
+
+        # Heartbeat & Fault-Tolerance tracking
+        self.peer_last_seen_tick: dict[str, int] = {}
+        self._crashed: bool = False
+        self.tasks_failed: int = 0
 
         # Edge-AI bidding state
         self.bid_cost: float | None = None
@@ -70,6 +89,15 @@ class AMRAgent:
         self.client.on_connect = self._on_connect
         self.client.on_message = self._on_message
         self.client.on_disconnect = self._on_disconnect
+
+    @property
+    def position(self) -> tuple[int, int]:
+        """Return the current (x, y) coordinates of the agent."""
+        return self.current_pos
+
+    @position.setter
+    def position(self, pos: tuple[int, int]) -> None:
+        self.current_pos = pos
 
     def connect(self, broker: str = "broker.emqx.io", port: int = 1883) -> None:
         """Connect to MQTT broker and start network loop.
@@ -96,6 +124,7 @@ class AMRAgent:
             client.subscribe("fleet/clock", qos=1)
             client.subscribe("fleet/bids", qos=1)
             client.subscribe("fleet/telemetry", qos=1)
+            client.subscribe("amr/+/heartbeat", qos=1)
             client.subscribe(f"fleet/dispatch/{self.agent_id}", qos=1)
 
     def _on_disconnect(self, client: mqtt.Client, userdata: object, rc: int) -> None:
@@ -124,6 +153,8 @@ class AMRAgent:
             self._handle_clock(payload)
         elif topic == "fleet/bids":
             self._handle_bid(payload)
+        elif topic.startswith("amr/") and topic.endswith("/heartbeat"):
+            self._handle_heartbeat(payload)
         elif topic.startswith("fleet/dispatch/"):
             self._handle_dispatch(payload)
 
@@ -142,13 +173,43 @@ class AMRAgent:
         if isinstance(inp, (list, tuple)) and len(inp) >= 2:
             next_pos = (inp[0], inp[1])
 
+        status = payload.get("status", "DOCKED")
+        if sender_id in self.peer_positions and self.peer_positions[sender_id].get("status") == "OFFLINE" and status != "OFFLINE":
+            status = "OFFLINE"
+
         self.peer_positions[sender_id] = {
             "pos": (x, y),
             "next_pos": next_pos,
             "intended_next_pos": next_pos,
             "priority": payload.get("priority", 1),
-            "status": payload.get("status", "DOCKED"),
+            "status": status,
         }
+
+    def _handle_heartbeat(self, payload: dict) -> None:
+        """Track heartbeat and vitality of peer robots."""
+        sender_id = payload.get("agent_id")
+        if not sender_id or sender_id == self.agent_id:
+            return
+        tick = payload.get("tick")
+        if tick is not None:
+            self.peer_last_seen_tick[sender_id] = tick
+
+        pos = payload.get("position")
+        status = payload.get("status", "ACTIVE")
+        if pos is not None and isinstance(pos, (list, tuple)) and len(pos) >= 2:
+            pos_tuple = (int(pos[0]), int(pos[1]))
+            if sender_id in self.peer_positions:
+                self.peer_positions[sender_id]["pos"] = pos_tuple
+                if self.peer_positions[sender_id].get("status") != "OFFLINE":
+                    self.peer_positions[sender_id]["status"] = status
+            else:
+                self.peer_positions[sender_id] = {
+                    "pos": pos_tuple,
+                    "next_pos": pos_tuple,
+                    "intended_next_pos": pos_tuple,
+                    "priority": 1,
+                    "status": status,
+                }
 
     def _handle_intent(self, payload: dict) -> None:
         """Process peer robot's path intent and update dynamic reservations.
@@ -228,7 +289,7 @@ class AMRAgent:
                             self.dynamic_obstacles.add((other_x, other_y))
                     
                     if self.current_goal and (current_time - self.last_replan_time > 1.0):
-                        self.plan_to_goal(*self.current_goal)
+                        self.plan_to_goal(*self.current_goal, is_replan=True, reason="conflict")
 
     def _handle_bid(self, payload: dict) -> None:
         """Process peer robot's bid for a task.
@@ -245,13 +306,25 @@ class AMRAgent:
             return  # Ignore own bids
 
         # If we're bidding on the same task, compare bid costs
-        if (self.pending_task and task and 
-            self.pending_task.get("x") == task.get("x") and 
-            self.pending_task.get("y") == task.get("y") and
-            self.bid_cost is not None and sender_bid_cost is not None):
-            
+        same_task = False
+        if self.pending_task and task:
+            if self.pending_task.get("id") and task.get("id"):
+                same_task = (self.pending_task["id"] == task["id"])
+            else:
+                same_task = (self.pending_task.get("x") == task.get("x") and self.pending_task.get("y") == task.get("y"))
+
+        if same_task and self.bid_cost is not None and sender_bid_cost is not None:
             # Lower bid cost wins (lower is better)
-            if sender_bid_cost < self.bid_cost or (sender_bid_cost == self.bid_cost and sender_priority > self.priority):
+            other_wins = False
+            if sender_bid_cost < self.bid_cost:
+                other_wins = True
+            elif sender_bid_cost == self.bid_cost:
+                if sender_priority > self.priority:
+                    other_wins = True
+                elif sender_priority == self.priority and sender_id < self.agent_id:
+                    other_wins = True
+
+            if other_wins:
                 self.pending_task = None
                 self.bid_cost = None
                 self.bid_broadcast_time = None
@@ -279,24 +352,122 @@ class AMRAgent:
                     return True  # Vertex collision
         return False
 
+    def publish_heartbeat(self, tick: int | None = None) -> None:
+        """Publish heartbeat payload to amr/{agent_id}/heartbeat."""
+        if self._crashed:
+            return
+        current_tick = self.local_time if tick is None else tick
+        payload = {
+            "agent_id": self.agent_id,
+            "tick": current_tick,
+            "position": self.position,
+            "status": self.status,
+        }
+        try:
+            self.client.publish(f"amr/{self.agent_id}/heartbeat", json.dumps(payload), qos=1)
+        except Exception:
+            pass
+
+    def check_peer_vitality(self, current_tick: int, threshold: int = 5) -> list[str]:
+        """Identify any known peer where (current_tick - peer_last_seen_tick[peer_id]) >= threshold.
+
+        Marks peer as status = 'OFFLINE' and locks the failed peer's last known coordinate (x, y)
+        as a permanent obstacle in local Time-Space A* search space and dynamic reservation tables
+        across all future time steps.
+
+        Returns:
+            List of newly identified offline peer agent IDs.
+        """
+        newly_offline = []
+        for peer_id, last_tick in list(self.peer_last_seen_tick.items()):
+            if peer_id == self.agent_id:
+                continue
+            peer_info = self.peer_positions.get(peer_id, {})
+            if peer_info.get("status") == "OFFLINE":
+                continue
+
+            if (current_tick - last_tick) >= threshold:
+                if peer_id not in self.peer_positions:
+                    self.peer_positions[peer_id] = {"status": "OFFLINE", "priority": 1}
+                else:
+                    self.peer_positions[peer_id]["status"] = "OFFLINE"
+
+                pos = self.peer_positions[peer_id].get("pos")
+                if pos is not None:
+                    # Fail-safe spatial isolation: Lock stranded robot's position as obstacle
+                    self.dynamic_obstacles.add(pos)
+                    # Dynamic reservation tables across all future time steps
+                    start_t = min(self.local_time, current_tick)
+                    for t in range(start_t, start_t + 101):
+                        if t not in self.dynamic_reservations:
+                            self.dynamic_reservations[t] = set()
+                        self.dynamic_reservations[t].add(pos)
+
+                    # If current path intersects with the stranded robot, force immediate replan
+                    if any((node[0], node[1]) == pos for node in self.current_path):
+                        goal_to_use = self.current_goal or self.goal
+                        if goal_to_use:
+                            self.plan_to_goal(*goal_to_use, is_replan=True, reason="conflict")
+
+                newly_offline.append(peer_id)
+                logger.warning(
+                    f"Agent '{self.agent_id}': Peer '{peer_id}' detected OFFLINE at tick {current_tick} "
+                    f"(last heartbeat: tick {last_tick}, threshold: {threshold})"
+                )
+        return newly_offline
+
+    def simulate_silent_crash(self) -> None:
+        """Abruptly halt MQTT publishing and disconnect without sending a shutdown message."""
+        self._crashed = True
+        self.status = "OFFLINE"
+        try:
+            self.client.loop_stop()
+            self.client.disconnect()
+        except Exception:
+            pass
+        logger.warning(f"Agent '{self.agent_id}' experienced a silent crash at pos {self.current_pos}")
+
+    def step(self, tick: int | None = None) -> None:
+        """Process simulation tick: broadcast heartbeat, check vitality, update bidding and position."""
+        if self._crashed:
+            return
+        if tick is not None:
+            self.local_time = tick
+
+        # Broadcast heartbeat on each simulation tick
+        self.publish_heartbeat(self.local_time)
+
+        # Check peer vitality
+        self.check_peer_vitality(self.local_time, threshold=5)
+
+        # Run tick processing
+        self._process_tick()
+
     def _handle_clock(self, payload: dict) -> None:
         """Process global clock tick, handle bidding, and update position along current path.
 
         Args:
             payload: JSON payload containing current simulation time.
         """
-        self.local_time = payload.get("time", self.local_time)
+        if self._crashed:
+            return
+        tick = payload.get("time", self.local_time)
+        self.step(tick)
+
+    def _process_tick(self) -> None:
+        """Internal routine executing bidding, movement, charging, and telemetry for the current tick."""
         current_time = time.time()
 
-        # Throttled sabotage check - only poll every 2 seconds to prevent blocking
-        if current_time - self.last_sabotage_check > 2.0:
+        # Sabotage check - only poll if explicitly enabled via environment variable
+        if os.getenv("ENABLE_SABOTAGE_POLL", "0") == "1" and self._backend_available is not False and (current_time - self.last_sabotage_check > 2.0):
             self.last_sabotage_check = current_time
             try:
-                res = requests.get("http://localhost:8000/api/sabotage/status", timeout=0.5)
+                res = requests.get("http://localhost:8000/api/sabotage/status", timeout=0.2)
                 if self.agent_id in res.json().get("sabotaged", []):
                     self.status = "DEAD"
+                self._backend_available = True
             except Exception:
-                pass
+                self._backend_available = False
 
         # Handle yield cooldown - if cooldown expired, resume status
         if self.status == "YIELDING" and current_time >= self.yield_cooldown:
@@ -305,51 +476,65 @@ class AMRAgent:
             else:
                 self.status = "DOCKED" if self.current_pos in self.CHARGING_STATIONS else "ACTIVE"
 
-        # Edge-AI Bidding Logic: Poll for tasks when DOCKED or ACTIVE
-        if self.status in ["DOCKED", "ACTIVE"]:
-            try:
-                res = requests.get("http://localhost:8000/api/tasks", timeout=0.5)
-                tasks = res.json().get("tasks", [])
-                for task in tasks:
-                    if not task.get("claimed", False):
-                        # Calculate bid cost: Manhattan distance + battery penalty
-                        distance = abs(self.current_pos[0] - task["x"]) + abs(self.current_pos[1] - task["y"])
-                        battery_penalty = (100 - self.battery) * 0.1
-                        self.bid_cost = distance + battery_penalty
-                        self.pending_task = task
-                        self.bid_broadcast_time = self.local_time
-                        
-                        bid_payload = {
-                            "sender_id": self.agent_id,
-                            "task": task,
-                            "bid_cost": self.bid_cost,
-                            "priority": self.priority,
-                        }
-                        self.client.publish("fleet/bids", json.dumps(bid_payload), qos=1)
-                        break  # Only bid on one task at a time
-            except Exception:
-                pass
-
         # Check if we won the bid (wait 1 tick after broadcasting)
         if (self.status in ["DOCKED", "ACTIVE"] and self.pending_task and self.bid_broadcast_time is not None 
             and self.local_time > self.bid_broadcast_time):
-            self.status = "RUNNING"
             task = self.pending_task
-            self.current_goal = (task["x"], task["y"])
-            self.goal = (task["x"], task["y"])
-            
-            self.plan_to_goal(task["x"], task["y"])
+            if not task.get("claimed", False) or task.get("claimed_by") == self.agent_id:
+                task["claimed"] = True
+                task["claimed_by"] = self.agent_id
+                self.status = "RUNNING"
+                self.active_task = task
+                self.task_start_time = time.time()
+                self.current_goal = (task["x"], task["y"])
+                self.goal = (task["x"], task["y"])
+                
+                self.plan_to_goal(task["x"], task["y"], is_replan=False, reason="task_assignment")
             
             self.pending_task = None
             self.bid_cost = None
             self.bid_broadcast_time = None
 
+        # Edge-AI Bidding Logic: Poll for tasks when DOCKED or ACTIVE (only if not currently bidding)
+        if self.status in ["DOCKED", "ACTIVE"] and self.pending_task is None:
+            tasks = []
+            if self.task_provider is not None:
+                try:
+                    tasks = self.task_provider()
+                except Exception:
+                    tasks = []
+            elif self._backend_available is not False:
+                try:
+                    res = requests.get("http://localhost:8000/api/tasks", timeout=0.2)
+                    tasks = res.json().get("tasks", [])
+                    self._backend_available = True
+                except Exception:
+                    self._backend_available = False
+
+            for task in tasks:
+                if not task.get("claimed", False):
+                    # Calculate bid cost: Manhattan distance + battery penalty
+                    distance = abs(self.current_pos[0] - task["x"]) + abs(self.current_pos[1] - task["y"])
+                    battery_penalty = (100 - self.battery) * 0.1
+                    self.bid_cost = distance + battery_penalty
+                    self.pending_task = task
+                    self.bid_broadcast_time = self.local_time
+                    
+                    bid_payload = {
+                        "sender_id": self.agent_id,
+                        "task": task,
+                        "bid_cost": self.bid_cost,
+                        "priority": self.priority,
+                    }
+                    self.client.publish("fleet/bids", json.dumps(bid_payload), qos=1)
+                    break  # Only bid on one task at a time
+
         prev_pos = self.current_pos
         current_real_time = time.time()
 
         if self.status in ["RUNNING", "YIELDING"] and self.current_path:
-            # INDUSTRIAL GOVERNOR: Never process a step faster than 0.45s of REAL time, ignoring tick bursts
-            if current_real_time - self.last_move_time >= 0.45:
+            # INDUSTRIAL GOVERNOR: Never process a step faster than step_interval of REAL time, ignoring tick bursts
+            if current_real_time - self.last_move_time >= self.step_interval:
                 self.last_move_time = current_real_time
                 
                 next_node = self.current_path[0]
@@ -379,10 +564,12 @@ class AMRAgent:
                             break
                 
                 if conflict:
+                    self.metrics_collector.record_reactive_stop()
                     self.status = "YIELDING"
                     self.yield_ticks += 1
                     # Randomized backoff to shatter livelock symmetry (3 to 6 ticks)
                     if self.yield_ticks > random.randint(3, 6) and blocking_peer_id and blocking_peer_id in self.peer_positions:
+                        self.metrics_collector.record_deadlock(resolved=False)
                         blocker_data = self.peer_positions[blocking_peer_id]
                         blocker_pos = blocker_data.get("pos")
                         blocker_next = blocker_data.get("next_pos", blocker_pos)
@@ -397,8 +584,9 @@ class AMRAgent:
                             walls_added.append(blocker_next)
                         
                         # 2. Force replan with a much wider detour
+                        replan_success = False
                         if self.current_goal:
-                            self.plan_to_goal(*self.current_goal)
+                            replan_success = self.plan_to_goal(*self.current_goal, is_replan=True, reason="deadlock")
                         
                         # 3. Cleanup temporary walls
                         for w in walls_added:
@@ -406,6 +594,8 @@ class AMRAgent:
                             
                         self.yield_ticks = 0
                         self.last_replan_time = time.time()
+                        if replan_success:
+                            self.metrics_collector.record_deadlock(resolved=True)
                 else:
                     self.status = "RUNNING"
                     self.yield_ticks = 0
@@ -415,6 +605,12 @@ class AMRAgent:
         # Strict Docking Cleanup
         if self.status in ["RUNNING", "YIELDING"] and not self.current_path:
             if self.current_goal and self.current_pos == self.current_goal:
+                if self.active_task is not None:
+                    created_at = self.active_task.get("created_at", self.task_start_time)
+                    duration = max(0.001, time.time() - created_at)
+                    self.metrics_collector.record_task_completed(duration)
+                    self.active_task = None
+
                 # Only DOCKED if on a charging station
                 if self.current_pos in self.CHARGING_STATIONS:
                     self.status = "DOCKED"
@@ -452,16 +648,28 @@ class AMRAgent:
                 nearest_dock = min(available_docks, key=lambda d: abs(d[0] - self.current_pos[0]) + abs(d[1] - self.current_pos[1]))
                 
                 # Abort current task and route to charger
-                self.plan_to_goal(*nearest_dock)
+                if self.active_task is not None:
+                    self.metrics_collector.record_task_failed()
+                    self.active_task = None
+                self.plan_to_goal(*nearest_dock, is_replan=False, reason="charging")
 
         # Auto-recovery: Force replan if stuck midway
         if self.status != "DEAD" and self.current_goal and not self.current_path:
             # Auto-recovery: Only force replan if we haven't just tried in the last 2 seconds
             if time.time() - getattr(self, "last_replan_time", 0) > 2.0:
-                self.plan_to_goal(*self.current_goal)
+                self.plan_to_goal(*self.current_goal, is_replan=True, reason="conflict")
                 self.last_replan_time = time.time()
 
+        # Record agent state tick distribution
+        self.metrics_collector.record_agent_tick(self.agent_id, self.status)
+
         # Publish telemetry with status, intended next position, and next_pos
+        self.publish_telemetry()
+
+    def publish_telemetry(self) -> None:
+        """Publish telemetry with status, intended next position, and next_pos."""
+        if self._crashed:
+            return
         next_step_pos = (self.current_path[0][0], self.current_path[0][1]) if self.current_path else self.current_pos
         telemetry = {
             "agent_id": self.agent_id,
@@ -482,6 +690,8 @@ class AMRAgent:
         Args:
             payload: JSON payload containing x and y coordinates.
         """
+        if self._crashed or self.status in ["DEAD", "OFFLINE"]:
+            return
         x = payload.get("x")
         y = payload.get("y")
         if x is None or y is None:
@@ -490,19 +700,36 @@ class AMRAgent:
         if self.status != "DEAD":
             self.status = "RUNNING"
 
-        self.plan_to_goal(x, y)
+        task_id = payload.get("task_id", f"task_{uuid.uuid4().hex[:6]}")
+        self.active_task = {
+            "id": task_id,
+            "x": x,
+            "y": y,
+            "created_at": time.time(),
+        }
+        self.task_start_time = time.time()
 
-    def plan_to_goal(self, goal_x: int, goal_y: int) -> bool:
+        self.plan_to_goal(x, y, is_replan=False, reason="dispatch")
+
+    def plan_to_goal(
+        self,
+        goal_x: int,
+        goal_y: int,
+        is_replan: bool = False,
+        reason: str | None = None,
+    ) -> bool:
         """Plan a path to the goal using Time-Space A* and broadcast intent.
 
         Args:
             goal_x: Goal X coordinate.
             goal_y: Goal Y coordinate.
+            is_replan: Whether this plan call is a replan.
+            reason: Reason for replanning ("conflict", "deadlock", etc.).
 
         Returns:
             True if path found, False otherwise.
         """
-        if self.status == "DEAD":
+        if self._crashed or self.status in ["DEAD", "OFFLINE"]:
             return False
 
         if self.status in ["DOCKED", "IDLE", "ACTIVE"]:
@@ -514,10 +741,11 @@ class AMRAgent:
         start_x, start_y = self.current_pos
 
         # Combine static obstacles with dynamic obstacles (dead robots, yielded spots) and solid peers
-        solid_peers = {data["pos"] for data in self.peer_positions.values() if data.get("status") in ["DEAD", "DOCKED"]}
+        solid_peers = {data["pos"] for data in self.peer_positions.values() if data.get("status") in ["DEAD", "DOCKED", "OFFLINE"] and "pos" in data}
         all_obstacles = self.obstacles | self.dynamic_obstacles | solid_peers
 
-        # Plan path starting from current local time
+        # Plan path starting from current local time with performance timing
+        t_start = time.perf_counter()
         path = time_space_astar(
             start=(start_x, start_y),
             goal=(goal_x, goal_y),
@@ -526,6 +754,13 @@ class AMRAgent:
             static_obstacles=all_obstacles,
             dynamic_reservations=self.dynamic_reservations,
             max_time=self.local_time + 100,  # Reasonable horizon
+            conflict_callback=self.metrics_collector.record_proactive_avoidance,
+        )
+        duration_ms = (time.perf_counter() - t_start) * 1000.0
+        self.metrics_collector.record_planning_step(
+            duration_ms=duration_ms,
+            is_replan=is_replan,
+            reason=reason,
         )
 
         if path is None:

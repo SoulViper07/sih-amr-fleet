@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import random
+import time
 import uuid
 from typing import Any
 
@@ -12,6 +13,10 @@ import requests
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+from backend.metrics import FleetMetricsCollector, get_collector
+
+collector = get_collector()
 
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
@@ -50,8 +55,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-BROKER = "broker.emqx.io"
-PORT = 1883
+import os
+BROKER = os.getenv("MQTT_BROKER", "localhost")
+PORT = int(os.getenv("MQTT_PORT", 1883))
 
 active_websockets: list[WebSocket] = []
 mqtt_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
@@ -64,6 +70,8 @@ def on_mqtt_message(client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -
     try:
         payload = json.loads(msg.payload.decode())
         payload["topic"] = msg.topic
+        if msg.topic == "fleet/metrics":
+            collector.update_from_snapshot(payload)
         mqtt_queue.put_nowait(payload)
     except json.JSONDecodeError as e:
         logger.error(f"Failed to decode MQTT message: {e}")
@@ -78,6 +86,9 @@ async def broadcast_mqtt_to_ws() -> None:
             message = await mqtt_queue.get()
             if not active_websockets:
                 continue
+
+            # Include live metrics summary under "metrics" key
+            message["metrics"] = collector.get_snapshot()
 
             message_str = json.dumps(message)
             disconnected: list[WebSocket] = []
@@ -111,6 +122,8 @@ async def startup_event() -> None:
         mqtt_client.connect(BROKER, PORT, keepalive=60)
         mqtt_client.subscribe("fleet/telemetry", qos=1)
         mqtt_client.subscribe("fleet/grid", qos=1)
+        mqtt_client.subscribe("fleet/metrics", qos=1)
+        mqtt_client.subscribe("amr/+/heartbeat", qos=1)
         mqtt_client.loop_start()
         logger.info("MQTT client connected and subscribed")
 
@@ -192,8 +205,16 @@ class TaskRequest(BaseModel):
 @app.post("/api/tasks")
 async def create_task(request: TaskRequest) -> dict[str, Any]:
     """Create a new task for AMRs to bid on."""
-    task = {"x": request.x, "y": request.y, "claimed": False}
+    task_id = f"task_{uuid.uuid4().hex[:6]}"
+    task = {
+        "id": task_id,
+        "x": request.x,
+        "y": request.y,
+        "created_at": time.time(),
+        "claimed": False,
+    }
     PENDING_TASKS.append(task)
+    collector.record_task_created()
     logger.info(f"New task created at ({request.x}, {request.y})")
     return {"status": "task_broadcasted", "task": task}
 
@@ -202,6 +223,12 @@ async def create_task(request: TaskRequest) -> dict[str, Any]:
 async def get_tasks() -> dict[str, Any]:
     """Return all pending tasks for AMRs to bid on."""
     return {"tasks": PENDING_TASKS}
+
+
+@app.get("/api/metrics")
+async def get_metrics() -> dict[str, Any]:
+    """Return live fleet performance and safety metrics snapshot."""
+    return collector.get_snapshot()
 
 
 class DispatchRequest(BaseModel):
