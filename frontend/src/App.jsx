@@ -427,13 +427,13 @@ const DashboardPanel = ({ robotIds, robots, time, isConnected, selectedAgent, se
       <div className="mb-3 bg-[#1f1614] rounded-lg border border-[#d4af37]/20 p-2.5 flex-shrink-0">
         <div className="flex items-center justify-between mb-1.5">
           <div className="flex items-center gap-1.5"><Cpu className="w-3.5 h-3.5 text-[#d4af37]" /><h3 className="font-semibold text-[#d4af37] text-xs">SWARM TELEMETRY</h3></div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
             <button
               onClick={(e) => { e.stopPropagation(); onReviveFleet && onReviveFleet(); }}
-              title="Revive Fleet / Emergency Repair"
-              className="px-2 py-0.5 rounded text-[8px] font-mono font-bold flex items-center gap-1 bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.7)] active:scale-95 cursor-pointer transition-all"
+              title="Manual Recovery: Revive all dead/sabotaged AMRs"
+              className="px-2.5 py-0.5 rounded text-[8.5px] font-mono font-bold flex items-center gap-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white border border-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.6)] active:scale-95 cursor-pointer transition-all uppercase tracking-wide"
             >
-              <Wrench className="w-2.5 h-2.5" /><span>REVIVE FLEET</span>
+              <Wrench className="w-2.5 h-2.5 text-white" /><span>REVIVE ALL BOTS</span>
             </button>
             <span className="text-[9px] text-[#d4af37]/80 font-mono">SABOTAGE</span>
           </div>
@@ -592,7 +592,7 @@ export default function App() {
         }
       });
       setTelemetryRobots({ ...robotsRef.current });
-      setToastMessage("Fleet Repaired: All AMRs Revived");
+      setToastMessage("Fleet Restored: All AMRs Revived");
       setTimeout(() => setToastMessage(null), 3500);
       setLogs(prev => [{
         id: `${Date.now()}-fleet-revive`,
@@ -600,7 +600,7 @@ export default function App() {
         agentId: "ALL",
         status: "ACTIVE",
         type: "RECOVERY",
-        message: `[RECOVERY] 🛠️ Emergency Repair: All fleet agents revived and returned to service`,
+        message: "Manual fleet override: All bots restored to service",
         color: "emerald"
       }, ...prev].slice(0, 25));
     } catch (err) {

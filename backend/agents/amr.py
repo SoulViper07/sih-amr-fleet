@@ -617,15 +617,9 @@ class AMRAgent:
         """Process simulation tick: broadcast heartbeat, check vitality, update bidding and position."""
         if tick is not None:
             self.local_time = tick
-        current_tick = self.local_time
 
-        # Self-Healing Timer: check if agent has been dead/offline for >= 40 ticks
+        # Deactivated or crashed agents remain dead indefinitely until manual revive
         if self.status in ["DEAD", "OFFLINE"] or getattr(self, "_crashed", False):
-            if self.dead_since_tick is None:
-                self.dead_since_tick = current_tick
-            elif (current_tick - self.dead_since_tick) >= 40:
-                logger.info(f"Autonomous diagnostic recovery: {self.agent_id} self-healed and returned to service.")
-                self.revive(getattr(self, "home_dock_pos", None))
             return
 
         # Broadcast heartbeat on each simulation tick
