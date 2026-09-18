@@ -75,8 +75,8 @@ def on_mqtt_message(client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -
         payload["topic"] = msg.topic
         if "time" in payload and isinstance(payload["time"], (int, float)) and payload["time"] < 1_000_000_000:
             latest_sim_tick = int(payload["time"])
-        if payload.get("agent_id"):
-            aid = payload["agent_id"]
+        aid = payload.get("agent_id") or payload.get("id")
+        if aid and isinstance(aid, str) and aid.lower().startswith("amr-"):
             if aid not in latest_fleet_state:
                 latest_fleet_state[aid] = {}
             latest_fleet_state[aid].update(payload)
@@ -241,6 +241,7 @@ async def revive_fleet() -> dict[str, Any]:
     """Revive all agents in the fleet."""
     global mqtt_client, SABOTAGED_AGENTS
     SABOTAGED_AGENTS.clear()
+    collector.silent_failures_detected = 0
     if mqtt_client:
         payload = {"action": "revive"}
         mqtt_client.publish("amr/all/revive", json.dumps(payload), qos=1)
@@ -272,7 +273,7 @@ async def create_task(request: TaskRequest) -> dict[str, Any]:
         rfp_telemetry = {
             "type": "TASK_RFP",
             "status": "RFP",
-            "agent_id": "SWARM",
+            "agent_id": None,
             "x": request.x,
             "y": request.y,
             "task_id": task_id,
@@ -307,18 +308,21 @@ async def dispatch_agent(agent_id: str, request: DispatchRequest) -> dict[str, A
     if not mqtt_client:
         raise HTTPException(status_code=503, detail="MQTT client not initialized")
 
+    if not agent_id.lower().startswith("amr-"):
+        raise HTTPException(status_code=400, detail="Invalid agent ID")
+
     payload = {"x": request.x, "y": request.y}
     topic = f"fleet/dispatch/{agent_id}"
     mqtt_client.publish(topic, json.dumps(payload), qos=1)
-    agent_id_num = agent_id.replace("AMR-", "")
+    agent_id_num = agent_id.replace("AMR-", "").replace("amr-", "")
     dispatch_msg = f"[WMS RFP] Injected task contract @ ({request.x}, {request.y}) -> Auction awarded to AMR-{agent_id_num}"
     logger.info(dispatch_msg)
     dispatch_telemetry = {
         "type": "DISPATCH",
         "status": "CNP",
         "agent_id": f"AMR-{agent_id_num}",
-        "x": request.x,
-        "y": request.y,
+        "target_x": request.x,
+        "target_y": request.y,
         "message": dispatch_msg,
         "time": latest_sim_tick,
     }

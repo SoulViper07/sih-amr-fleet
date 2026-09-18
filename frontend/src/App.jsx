@@ -718,26 +718,37 @@ export default function App() {
           setMetrics(data.metrics);
         }
 
+        const pushLog = (logObj) => {
+          setLogs(prevLogs => {
+            const now = Date.now();
+            if (prevLogs.some(l => l.message === logObj.message && Math.abs(now - (l._timestamp || 0)) < 1500)) {
+              return prevLogs;
+            }
+            return [{ ...logObj, _timestamp: now }, ...prevLogs].slice(0, 25);
+          });
+        };
+
         if (data.type === "TASK_RFP" || data.type === "DISPATCH" || data.type === "CNP") {
           const isRfp = data.type === "TASK_RFP";
           const incomingMsg = data.message || (isRfp ? `[TASK RFP] Broadcasted target @ (${data.x}, ${data.y}) to fleet auction pool` : `[CNP AUCTION] ${data.agent_id || 'AMR'} claimed task`);
-          setLogs(prevLogs => {
-            if (prevLogs.some(l => l.message === incomingMsg)) return prevLogs;
-            return [{
-              id: `${data.type}-${Date.now()}-${Math.random()}`,
-              time: eventTime,
-              tick: eventTick,
-              agentId: isRfp ? null : data.agent_id,
-              status: isRfp ? "RFP" : "CNP",
-              type: isRfp ? "TASK_RFP" : "CNP",
-              message: incomingMsg,
-              color: "cyan",
-            }, ...prevLogs].slice(0, 25);
+          pushLog({
+            id: `${data.type}-${Date.now()}-${Math.random()}`,
+            time: eventTime,
+            tick: eventTick,
+            agentId: isRfp ? null : data.agent_id,
+            status: isRfp ? "RFP" : "CNP",
+            type: isRfp ? "TASK_RFP" : "CNP",
+            message: incomingMsg,
+            color: "cyan",
           });
         }
 
-        if (data.agent_id) {
-          const prevBot = robotsRef.current[data.agent_id] || {};
+        const rawAgentId = data.agent_id || data.id;
+        const isValidAmr = typeof rawAgentId === 'string' && /^AMR-\d+$/i.test(rawAgentId);
+
+        if (isValidAmr) {
+          const agentId = rawAgentId.toUpperCase();
+          const prevBot = robotsRef.current[agentId] || {};
           const prevStatus = prevBot.status;
           let status = data.status ?? prevBot.status ?? "ACTIVE";
           if (status === "IDLE") status = "DOCKED";
@@ -746,9 +757,16 @@ export default function App() {
             ? Number(data.battery)
             : prevBot.battery;
 
-          robotsRef.current[data.agent_id] = {
+          // Guard: do not overwrite live AMR physical position with dispatch destination coordinates
+          const posX = data.type === 'DISPATCH' ? (prevBot.x ?? data.x ?? 0) : (data.x ?? prevBot.x ?? 0);
+          const posY = data.type === 'DISPATCH' ? (prevBot.y ?? data.y ?? 0) : (data.y ?? prevBot.y ?? 0);
+
+          robotsRef.current[agentId] = {
             ...prevBot,
             ...data,
+            agent_id: agentId,
+            x: posX,
+            y: posY,
             status,
             time: eventTick,
             tick: eventTick,
@@ -756,33 +774,33 @@ export default function App() {
             priority: data.priority ?? prevBot.priority ?? 1,
           };
 
-          setRobotIds(prevIds => (prevIds.includes(data.agent_id) ? prevIds : [...prevIds, data.agent_id]));
+          setRobotIds(prevIds => (prevIds.includes(agentId) ? prevIds : [...prevIds, agentId]));
 
           const rawStatus = (data.status || "").toUpperCase();
           if (rawStatus !== "MOVING" && rawStatus !== "IDLE" && status !== prevStatus) {
             if (status === "BIDDING") {
-              setLogs(prevLogs => [{ id: `${eventTick}-${data.agent_id}-bid-${Date.now()}`, time: eventTime, tick: eventTick, agentId: data.agent_id, status: "CNP", type: "CNP", message: `[${data.agent_id}] ⚡ BROADCAST BID: Estimating dynamic time-space cost`, color: "cyan" }, ...prevLogs].slice(0, 25));
+              pushLog({ id: `${eventTick}-${agentId}-bid-${Date.now()}`, time: eventTime, tick: eventTick, agentId: agentId, status: "CNP", type: "CNP", message: `[${agentId}] ⚡ BROADCAST BID: Estimating dynamic time-space cost`, color: "cyan" });
             } else if (status === "CLAIMED") {
-              const claimMsg = data.message || `[CNP AUCTION] ${data.agent_id} claimed task`;
-              setLogs(prevLogs => [{ id: `${eventTick}-${data.agent_id}-claim-${Date.now()}`, time: eventTime, tick: eventTick, agentId: data.agent_id, status: "CNP", type: "CNP", message: claimMsg, color: "cyan" }, ...prevLogs].slice(0, 25));
-            } else if (status === "YIELDING" && !activeYields.current.has(data.agent_id)) {
-              activeYields.current.add(data.agent_id);
-              setLogs(prevLogs => [{ id: `${eventTick}-${data.agent_id}-yield-${Date.now()}`, time: eventTime, tick: eventTick, agentId: data.agent_id, status: "YIELDING", type: "COLLISION_AVOID", message: `[${data.agent_id}] Yielding right-of-way to higher-priority node`, color: "orange" }, ...prevLogs].slice(0, 25));
+              const claimMsg = data.message || `[CNP AUCTION] ${agentId} claimed task`;
+              pushLog({ id: `${eventTick}-${agentId}-claim-${Date.now()}`, time: eventTime, tick: eventTick, agentId: agentId, status: "CNP", type: "CNP", message: claimMsg, color: "cyan" });
+            } else if (status === "YIELDING" && !activeYields.current.has(agentId)) {
+              activeYields.current.add(agentId);
+              pushLog({ id: `${eventTick}-${agentId}-yield-${Date.now()}`, time: eventTime, tick: eventTick, agentId: agentId, status: "YIELDING", type: "COLLISION_AVOID", message: `[${agentId}] Yielding right-of-way to higher-priority node`, color: "orange" });
             } else if (status === "OFFLINE") {
-              setLogs(prevLogs => [{ id: `${eventTick}-${data.agent_id}-offline-${Date.now()}`, time: eventTime, tick: eventTick, agentId: data.agent_id, status: "OFFLINE", type: "FAILURE", message: `[${data.agent_id}] ⚠️ HEARTBEAT EXPIRED: Node OFFLINE (Stranded)`, color: "red" }, ...prevLogs].slice(0, 25));
+              pushLog({ id: `${eventTick}-${agentId}-offline-${Date.now()}`, time: eventTime, tick: eventTick, agentId: agentId, status: "OFFLINE", type: "FAILURE", message: `[${agentId}] ⚠️ HEARTBEAT EXPIRED: Node OFFLINE (Stranded)`, color: "red" });
             } else if (status === "DEAD") {
-              setLogs(prevLogs => [{ id: `${eventTick}-${data.agent_id}-dead-${Date.now()}`, time: eventTime, tick: eventTick, agentId: data.agent_id, status: "DEAD", type: "FAILURE", message: `[${data.agent_id}] ⚠️ CRITICAL FAILURE: Node offline`, color: "red" }, ...prevLogs].slice(0, 25));
+              pushLog({ id: `${eventTick}-${agentId}-dead-${Date.now()}`, time: eventTime, tick: eventTick, agentId: agentId, status: "DEAD", type: "FAILURE", message: `[${agentId}] ⚠️ CRITICAL FAILURE: Node offline`, color: "red" });
             } else if (status === "DOCKED" && prevStatus && prevStatus !== "DOCKED") {
-              setLogs(prevLogs => [{ id: `${eventTick}-${data.agent_id}-dock-${Date.now()}`, time: eventTime, tick: eventTick, agentId: data.agent_id, status: "DOCKED", type: "DOCKING", message: `[${data.agent_id}] 🔌 DOCKED at charging pad`, color: "sky" }, ...prevLogs].slice(0, 25));
+              pushLog({ id: `${eventTick}-${agentId}-dock-${Date.now()}`, time: eventTime, tick: eventTick, agentId: agentId, status: "DOCKED", type: "DOCKING", message: `[${agentId}] 🔌 DOCKED at charging pad`, color: "sky" });
             }
           }
 
-          if (status !== "YIELDING" && activeYields.current.has(data.agent_id)) {
-            activeYields.current.delete(data.agent_id);
+          if (status !== "YIELDING" && activeYields.current.has(agentId)) {
+            activeYields.current.delete(agentId);
           }
-          prevRobotPositions.current[data.agent_id] = {
-            x: data.x ?? prevBot.x ?? 0,
-            y: data.y ?? prevBot.y ?? 0,
+          prevRobotPositions.current[agentId] = {
+            x: posX,
+            y: posY,
             time: eventTick,
             tick: eventTick,
             status,
@@ -831,30 +849,6 @@ export default function App() {
 
     const beaconId = Date.now();
     setTargetBeacons(prev => [...prev.filter(b => Date.now() - b.id < 5000), { x: clampedX, y: clampedY, id: beaconId }]);
-    const agentNum = selectedAgentRef.current ? selectedAgentRef.current.replace("AMR-", "") : "1";
-    setLogs(prev => [
-      {
-        id: `${beaconId}-wms`,
-        time: timeRef.current,
-        tick: timeRef.current,
-        agentId: selectedAgentRef.current,
-        status: "CNP",
-        type: "CNP",
-        message: `[WMS RFP] Injected task contract @ (${clampedX}, ${clampedY}) -> Auction awarded to AMR-${agentNum}`,
-        color: "cyan"
-      },
-      {
-        id: `${beaconId}-rfp`,
-        time: timeRef.current,
-        tick: timeRef.current,
-        agentId: null,
-        status: "RFP",
-        type: "TASK_RFP",
-        message: `[TASK RFP] Broadcasted target @ (${clampedX}, ${clampedY}) to fleet auction pool`,
-        color: "cyan"
-      },
-      ...prev
-    ].slice(0, 25));
 
     try { await axios.post(`${API_URL}/api/tasks`, { x: clampedX, y: clampedY }); } catch { /* ignore */ }
     try {

@@ -169,8 +169,8 @@ export const TelemetryHUD = React.memo(function TelemetryHUD({
           </div>
         </div>
 
-        {/* Fault Resilience Row (when failures detected or tasks salvaged) */}
-        {(silentFailures > 0 || tasksReassigned > 0) && (
+        {/* Fault Resilience Row (only when actual stranded robots exist) */}
+        {(offlineCount > 0 && silentFailures > 0) && (
           <div className="bg-rose-950/30 border border-rose-900/40 rounded-lg p-1.5 flex items-center justify-between text-[10px]">
             <span className="text-rose-400 font-semibold flex items-center gap-1">
               <AlertTriangle className="w-3 h-3" /> Silent Failures:
