@@ -25,7 +25,7 @@ This project implements an **edge-computed, decentralized fleet management syste
 
 - **Decentralized Collision Avoidance** — Time-Space A* with vertex/edge conflict checks against peer reservations
 - **Contract Net Protocol (CNP) Transparency** — P2P task auctioning with live terminal visibility into decentralized bid evaluations: $\text{Cost} = f(\text{Manhattan distance}, \text{SoC battery})$
-- **4D Time-Space A* & Rolling Reservation Pruning** — Bounded 60-tick search horizon with automatic pruning of expired coordinates ($t < \text{current\_tick}$), yielding $<0.5\text{ ms}$ planning latency and accurate per-path conflict tracking
+- **4D Time-Space A* & Rolling Reservation Pruning** — Bounded 60-tick search horizon with automatic pruning of expired coordinates (`t < current_tick`), yielding <0.5 ms planning latency and accurate per-path conflict tracking
 - **Fault Injection & Fleet Recovery** — Built-in sabotage engine where killed units retain their real drained battery state, surviving peers treat dead units as static obstacles, and supervisors execute manual fleet recovery
 - **Dynamic Replanning** — Automatic yield/replan when conflicts detected (higher ID yields)
 - **Live Battery Telemetry** — Simulated drain (0.5%/move, 0.1%/idle) with visual progress bars and persistent SoC state
@@ -80,7 +80,7 @@ flowchart LR
 1. **Simulator** publishes clock ticks → all agents advance
 2. **Tasks & CNP Auctions** — Operator/WMS issues task RFP → idle agents evaluate bid costs and claim contracts
 3. **Agents** plan paths with 4D Time-Space A* (<0.5 ms) → broadcast `fleet/intents` (space-time reservations)
-4. **Peers** receive intents → prune expired coordinates ($t < \text{current\_tick}$) → update reservations and detect conflicts
+4. **Peers** receive intents → prune expired coordinates (`t < current_tick`) → update reservations and detect conflicts
 5. **Agents** publish `fleet/telemetry` → FastAPI bridges to WebSocket → Dashboard telemetry HUD
 6. **Faults & Recovery** — Sabotaged nodes persist drained SoC and become static obstacles; operators restore fleet via `/api/revive`
 
@@ -102,7 +102,7 @@ Task allocation operates completely decentralized via peer-to-peer auction negot
 
 ### 2. 4D Time-Space A* Pruning & High-Performance Pathfinding
 Dynamic reservations scale predictably without memory degradation or state explosion:
-- **Rolling 60-Tick Reservation Pruning:** Spacetime reservations are strictly bounded to a 60-tick rolling horizon. Expired spacetime coordinates where $t < \text{current\_tick}$ are automatically purged from memory on each tick and incoming peer intent.
+- **Rolling 60-Tick Reservation Pruning:** Spacetime reservations are strictly bounded to a 60-tick rolling horizon. Expired spacetime coordinates where `t < current_tick` are automatically purged from memory on each tick and incoming peer intent.
 - **$O(1)$ Spacetime Lookups:** Active reservations are converted into a flat coordinate set `(x, y, t)` for constant-time vertex and edge-swap conflict evaluation.
 - **Sub-Millisecond Planning Latency (<0.5 ms):** Path computation completes in under **0.5 ms** per search query.
 - **Per-Path Conflict Detection:** Proactive conflict metrics record genuine detours and wait-steps once per planned trajectory rather than inflating counters on every exploratory node expansion in the A* open set.
